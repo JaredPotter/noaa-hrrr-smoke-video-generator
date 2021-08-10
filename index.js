@@ -122,7 +122,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
       await overlay(
         BASE_MAP_FILE_PATH,
         layerFilename,
-        `${directory}/final${paddedId}.png`
+        `${directory}/final${paddedId}.png`,
+        time
       );
 
       console.log('done with image: ' + paddedId);
@@ -287,7 +288,14 @@ async function changeTransparency(imagePath, opacity = 0.75) {
 }
 
 // convert 0001.png 0002.png -gravity center -background None -layers Flatten composite.png
-async function overlay(backgroundImagePath, overlayImagePath, outputFilename) {
+async function overlay(
+  backgroundImagePath,
+  overlayImagePath,
+  outputFilename,
+  timestamp
+) {
+  const tempFilename = 'temp.png';
+
   spawnSync('convert', [
     backgroundImagePath,
     overlayImagePath,
@@ -297,17 +305,33 @@ async function overlay(backgroundImagePath, overlayImagePath, outputFilename) {
     'None',
     '-layers',
     'Flatten',
+    tempFilename,
+  ]);
+
+  const timestampMoment = moment.utc(timestamp);
+  console.log('UTC TIME: ' + timestampMoment.format('MMM DD YYYY hh:mm A'));
+  const readableTimestamp = timestampMoment
+    .local()
+    .format('MMM DD YYYY hh:mm A');
+  console.log('LOCAL TIME: ' + readableTimestamp);
+
+  // Add label // doesn't work
+  spawnSync('convert', [
+    tempFilename,
+    '-background',
+    'Khaki',
+    '-font',
+    'Times-New-Roman',
+    '-pointsize',
+    '24',
+    `label:Mountain Time - ${readableTimestamp}`,
+    '-gravity',
+    'Center',
+    '-append',
     outputFilename,
   ]);
 
-  // Add label // doesn't work
-  // spawnSync('convert', [
-  //   outputFilename,
-  //   '-background',
-  //   'Khaki',
-  //   `label:'Faerie Dragon'`,
-  //   outputFilename,
-  // ]);
+  fs.unlinkSync(tempFilename);
 }
 // ffmpeg -r 8 -f image2 -s 1500x1500 -i ./near-surface-smoke/2021-08-10T05_00_00Z/final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart ./near-surface-smoke/2021-08-10T05_00_00Z/near-surface-smoke-2021-08-10T05_00_00Z.mp4
 // ffmpeg -r 8 -f image2 -s 1500x1500 -i final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart near-surface-smoke-2021-08-10T05_00_00Z.mp4
