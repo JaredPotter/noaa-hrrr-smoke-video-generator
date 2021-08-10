@@ -315,7 +315,7 @@ async function overlay(
     .format('MMM DD YYYY hh:mm A');
   console.log('LOCAL TIME: ' + readableTimestamp);
 
-  // Add label // doesn't work
+  // Add annotation for date time
   spawnSync('convert', [
     tempFilename,
     '-background',
@@ -324,10 +324,11 @@ async function overlay(
     'Times-New-Roman',
     '-pointsize',
     '24',
-    `label:Mountain Time - ${readableTimestamp}`,
     '-gravity',
-    'Center',
-    '-append',
+    'south',
+    '-annotate',
+    '+10+10',
+    `Mountain Time - ${readableTimestamp}`,
     outputFilename,
   ]);
 
