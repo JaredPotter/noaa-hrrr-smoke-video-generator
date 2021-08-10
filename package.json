@@ -1,0 +1,21 @@
+{
+  "name": "noaa-hrrr-smoke-video-generator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mapbox/blend": "^2.0.1",
+    "axios": "^0.21.1",
+    "cross-spawn": "^7.0.3",
+    "fs-extra": "^10.0.0",
+    "moment": "^2.29.1",
+    "node-cron": "^3.0.0",
+    "stream": "^0.0.2"
+  }
+}
