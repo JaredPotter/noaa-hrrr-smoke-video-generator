@@ -1,11 +1,24 @@
 const axios = require('axios');
 const crossSpawn = require('cross-spawn');
+const path = require('path');
+const { spawnSync } = require('child_process');
+const crossSpawnSync = crossSpawn.sync;
 const moment = require('moment');
 const cron = require('node-cron');
 const fs = require('fs-extra');
 const blend = require('@mapbox/blend');
 
+const BASE_MAP_FILE_PATH = './base-map.png';
+
 const isDev = process.argv[2];
+const arg3 = process.argv[3];
+let forecastResumption = !isNaN(Number(arg3)) ? Number(arg3) : 0;
+
+console.log('forecastResumption: ' + forecastResumption);
+
+if (forecastResumption > 0) {
+  forecastResumption = forecastResumption - 1;
+}
 
 if (!!isDev) {
   (async () => {
@@ -14,6 +27,9 @@ if (!!isDev) {
     const startingY = 44;
     const gridHeight = 5;
     const gridWidth = 6;
+
+    // await changeTransparency('./0002-copy.png', 0.75);
+    // await overlay('./0001.png', './0002.png', './composite0001.png');
 
     await fetchAndSaveNoaaHrrrOverlays(
       zoomLevel,
@@ -34,10 +50,12 @@ async function fetchAndSaveNoaaHrrrOverlays(
   gridHeight,
   gridWidth
 ) {
+  let availableForecastsLimitReached = false;
+
   const codeToType = {
-    // sfc_smoke: 'near-surface-smoke',
+    sfc_smoke: 'near-surface-smoke',
     // vi_smoke: 'vertically-integrated-smoke',
-    sfc_visibility: 'surface-visibility',
+    // sfc_visibility: 'surface-visibility',
   };
 
   const typeCodes = Object.keys(codeToType);
@@ -47,9 +65,15 @@ async function fetchAndSaveNoaaHrrrOverlays(
   now.set('seconds', 0);
   now.add(-2, 'hour');
   const modelrun = now.format();
-  // return
 
-  for (let forecastHour = 0; forecastHour < 48; forecastHour++) {
+  //adjust for correct numbering
+  now.add(forecastResumption, 'hours');
+
+  for (
+    let forecastHour = forecastResumption;
+    forecastHour < 48;
+    forecastHour++
+  ) {
     const time = now.format();
 
     for (let i = 0; i < typeCodes.length; i++) {
@@ -64,30 +88,67 @@ async function fetchAndSaveNoaaHrrrOverlays(
         time,
         modelrun
       );
-      // debugger;
-      const blendeOverlayBuffer = await blendImages(tiles, 256, 1500, 1500);
+
+      if (tiles.length === 0) {
+        availableForecastsLimitReached = true;
+        break;
+      }
+
+      console.log('Snitching together tile images...');
+      const completeImageBuffer = await stitchTileImages(
+        tiles,
+        256,
+        1500,
+        1500
+      );
 
       const directory = `${codeToType[typeCode]}/${modelrun}`;
       fs.ensureDirSync(directory);
-      const filename = `overlay-${time}-${String(forecastHour + 1).padStart(
-        4,
-        '0'
-      )}.png`;
+      const paddedId = String(forecastHour + 1).padStart(4, '0');
+      const filename = `overlay-${time}-${paddedId}.png`;
 
       console.log('Saving... ' + directory + '/' + filename);
 
-      fs.writeFileSync(`${directory}/${filename}`, blendeOverlayBuffer);
+      const layerFilename = `${directory}/${filename}`;
 
-      await sleep(5000);
+      fs.writeFileSync(layerFilename, completeImageBuffer);
+
+      // Adjust overlay transparency to 75%
+      console.log('Now changing transparency...');
+      await changeTransparency(layerFilename, 0.75);
+
+      // Composite with base map tile
+      console.log('Now overlaying...');
+      await overlay(
+        BASE_MAP_FILE_PATH,
+        layerFilename,
+        `${directory}/final${paddedId}.png`
+      );
+
+      console.log('done with image: ' + paddedId);
+      await sleep(10000);
+    }
+
+    if (availableForecastsLimitReached) {
+      break;
     }
 
     now.add(1, 'hour');
   }
 
+  for (let i = 0; i < typeCodes.length; i++) {
+    const typeCode = typeCodes[i];
+    const timestamp = modelrun.replaceAll(':', '_');
+    const directory = `./${codeToType[typeCode]}/${modelrun}`;
+    const absolutePath = path.resolve(directory);
+    const outputVideoFilename = `${absolutePath}/${codeToType[typeCode]}-${timestamp}.mp4`;
+    await generateMp4Video(absolutePath, outputVideoFilename, 15);
+  }
+
   console.log('FINISHED with all NOAA HRRR overlay fetching');
 }
 
-async function blendImages(imageBufferList, tileSize, height, width) {
+async function stitchTileImages(imageBufferList, tileSize, height, width) {
   for (const imageBufferObject of imageBufferList) {
     imageBufferObject.x *= tileSize;
     imageBufferObject.y *= tileSize;
@@ -135,20 +196,27 @@ async function fetchMapTiles(
 
   // const legendUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/legend/hrrr_smoke?var=${typeCode}&level=0`;
   // const legendImageBuffer = await axios(legendUrl);
-
+  // https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=8&y=13&z=5&time=2021-08-10T22:00:00.000Z&modelrun=2021-08-10T05:00:00Z&level=0
   for (let x = startingX; x <= startingX + gridWidth; x++) {
     for (let y = startingY; y <= startingY + gridHeight; y++) {
       const imageUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=${typeCode}&x=${x}&y=${y}&z=${zoomLevel}&time=${time}&modelrun=${modelrunTime}&level=0`;
       // console.log(`Fetching ${imageUrl}`);
       promiseList.push(
         axios.get(imageUrl, {
+          // responseType: 'image/png',
           responseType: 'arraybuffer',
         })
       );
     }
   }
 
-  const imageResponses = await Promise.all(promiseList);
+  console.log('awaiting all tiles to return...');
+  let imageResponses = await Promise.all(promiseList);
+
+  if (imageResponses[0].status === 204) {
+    console.log('Available forecast limit reached! Wrapping up.');
+    imageResponses = [];
+  }
 
   for (const response of imageResponses) {
     const url = response.config.url;
@@ -202,6 +270,76 @@ async function fetchBaseMapTiles(
   }
 
   return imageBufferList;
+}
+
+// convert 0001.png -channel A -evaluate Multiply 0.75 +channel 0001-new.png
+async function changeTransparency(imagePath, opacity = 0.75) {
+  spawnSync('convert', [
+    imagePath,
+    '-channel',
+    'A',
+    '-evaluate',
+    'Multiply',
+    opacity,
+    '+channel',
+    imagePath,
+  ]);
+}
+
+// convert 0001.png 0002.png -gravity center -background None -layers Flatten composite.png
+async function overlay(backgroundImagePath, overlayImagePath, outputFilename) {
+  spawnSync('convert', [
+    backgroundImagePath,
+    overlayImagePath,
+    '-gravity',
+    'center',
+    '-background',
+    'None',
+    '-layers',
+    'Flatten',
+    outputFilename,
+  ]);
+
+  // Add label // doesn't work
+  // spawnSync('convert', [
+  //   outputFilename,
+  //   '-background',
+  //   'Khaki',
+  //   `label:'Faerie Dragon'`,
+  //   outputFilename,
+  // ]);
+}
+// ffmpeg -r 8 -f image2 -s 1500x1500 -i ./near-surface-smoke/2021-08-10T05_00_00Z/final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart ./near-surface-smoke/2021-08-10T05_00_00Z/near-surface-smoke-2021-08-10T05_00_00Z.mp4
+// ffmpeg -r 8 -f image2 -s 1500x1500 -i final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart near-surface-smoke-2021-08-10T05_00_00Z.mp4
+async function generateMp4Video(directory, outputFilename, crf = 15) {
+  const flags = [
+    '-r', // framerate
+    '8',
+    '-f',
+    'image2',
+    '-s',
+    '1500x1500',
+    '-i',
+    `${directory}/final%04d.png`,
+    '-vcodec',
+    'libx264',
+    '-crf',
+    crf,
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    'faststart',
+    outputFilename,
+  ];
+
+  console.log(`ffmpeg ${flags.join(' ')}`);
+
+  spawnSync('ffmpeg', flags);
+
+  //ffmpeg -r 60 -f image2 -s 1920x1080 -i pic%04d.png -vcodec libx264 -crf 25  -pix_fmt yuv420p test.mp4
+
+  // fast start
+  // ffmpeg -i origin.mp4 -acodec copy -vcodec copy -movflags faststart fast_start.mp4
 }
 
 async function sleep(ms) {
