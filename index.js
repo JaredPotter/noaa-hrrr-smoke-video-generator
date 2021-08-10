@@ -1,13 +1,13 @@
 const axios = require('axios');
 const crossSpawn = require('cross-spawn');
 const moment = require('moment');
-const nodeCron = require('node-cron');
+const cron = require('node-cron');
 const fs = require('fs-extra');
 const blend = require('@mapbox/blend');
 
 const isDev = process.argv[2];
 
-if (isDev) {
+if (!!isDev) {
   (async () => {
     const zoomLevel = 7;
     const startingX = 19;
@@ -66,7 +66,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
       );
       // debugger;
       const blendeOverlayBuffer = await blendImages(tiles, 256, 1500, 1500);
-      const directory = `${codeToType[typeCode]}`;
+
+      const directory = `${codeToType[typeCode]}/${modelrun}`;
       fs.ensureDirSync(directory);
       const filename = `overlay-${time}-${String(forecastHour + 1).padStart(
         4,
