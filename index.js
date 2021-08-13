@@ -7,6 +7,22 @@ const moment = require('moment');
 const cron = require('node-cron');
 const fs = require('fs-extra');
 const blend = require('@mapbox/blend');
+const firebaseAdmin = require('firebase-admin');
+
+const FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME =
+  './noaa-hrrr-smoke-firebase-adminsdk-en9p6-8fe174d250.json';
+
+if (!fs.existsSync(FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME)) {
+  console.log('FIREBASE SERVICE ACCOUNT FILE MISSING!');
+  console.log('NOW EXITING!');
+  return;
+}
+
+const firebaseAdminServiceAccount = require(FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME);
+
+firebaseAdmin.initializeApp({
+  credential: firebaseAdmin.credential.cert(firebaseAdminServiceAccount),
+});
 
 const BASE_MAP_FILE_PATH = './base-map.png';
 
@@ -144,6 +160,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
     const directory = `./${codeToType[typeCode]}/${modelrun}`;
     const absolutePath = path.resolve(directory);
     const outputVideoFilename = `${absolutePath}/${codeToType[typeCode]}-${timestamp}.mp4`;
+
     await generateMp4Video(absolutePath, outputVideoFilename, 15);
   }
 
