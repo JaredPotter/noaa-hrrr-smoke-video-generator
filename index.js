@@ -74,8 +74,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
   const codeToType = {
     sfc_smoke: 'near-surface-smoke',
-    // vi_smoke: 'vertically-integrated-smoke',
-    // sfc_visibility: 'surface-visibility',
+    vi_smoke: 'vertically-integrated-smoke',
+    sfc_visibility: 'surface-visibility',
   };
 
   const typeCodes = Object.keys(codeToType);
