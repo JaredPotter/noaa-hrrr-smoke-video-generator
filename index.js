@@ -24,6 +24,10 @@ firebaseAdmin.initializeApp({
   credential: firebaseAdmin.credential.cert(firebaseAdminServiceAccount),
 });
 
+const bucket = firebaseAdmin
+  .storage()
+  .bucket('gs://noaa-hrrr-smoke.appspot.com');
+
 const BASE_MAP_FILE_PATH = './base-map.png';
 
 const isDev = process.argv[2];
@@ -159,9 +163,27 @@ async function fetchAndSaveNoaaHrrrOverlays(
     const timestamp = modelrun.replaceAll(':', '_');
     const directory = `./${codeToType[typeCode]}/${modelrun}`;
     const absolutePath = path.resolve(directory);
-    const outputVideoFilename = `${absolutePath}/${codeToType[typeCode]}-${timestamp}.mp4`;
+    const outputVideoFilename = `${absolutePath}/${timestamp}.mp4`;
 
-    await generateMp4Video(absolutePath, outputVideoFilename, 15);
+    try {
+      await generateMp4Video(absolutePath, outputVideoFilename, 15);
+    } catch (error) {
+      console.error(error);
+      console.error('Failed to generate video. Now exiting!');
+      continue;
+    }
+
+    try {
+      const uploadFileName = `${codeToType[typeCode]}/${modelrun}/${timestamp}.mp4`;
+      const videoUrl = await uploadVideo(uploadFileName);
+
+      // TODO: POST to Laravel API
+      console.log(videoUrl);
+    } catch (error) {
+      console.error(error);
+      console.log('Failed to upload video. Now exiting!');
+      continue;
+    }
   }
 
   console.log('FINISHED with all NOAA HRRR overlay fetching');
@@ -356,7 +378,7 @@ async function overlay(
 }
 // ffmpeg -r 8 -f image2 -s 1500x1500 -i ./near-surface-smoke/2021-08-10T05_00_00Z/final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart ./near-surface-smoke/2021-08-10T05_00_00Z/near-surface-smoke-2021-08-10T05_00_00Z.mp4
 // ffmpeg -r 8 -f image2 -s 1500x1500 -i final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart near-surface-smoke-2021-08-10T05_00_00Z.mp4
-async function generateMp4Video(directory, outputFilename, crf = 15) {
+async function generateMp4Video(directory, outputFilename, crf = 25) {
   const flags = [
     '-r', // framerate
     '8',
@@ -385,6 +407,19 @@ async function generateMp4Video(directory, outputFilename, crf = 15) {
 
   // fast start
   // ffmpeg -i origin.mp4 -acodec copy -vcodec copy -movflags faststart fast_start.mp4
+}
+
+async function uploadVideo(fileName) {
+  const fileResultArray = await bucket.upload(`./${fileName}`, {
+    destination: fileName,
+  });
+
+  const downloadUrl = await fileResultArray[0].getSignedUrl({
+    action: 'read',
+    expires: '03-09-2491',
+  });
+
+  return downloadUrl;
 }
 
 async function sleep(ms) {
