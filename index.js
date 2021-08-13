@@ -72,6 +72,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
   for (
     let forecastHour = forecastResumption;
     forecastHour < 48;
+    // forecastHour < 4;
     forecastHour++
   ) {
     const time = now.format();
@@ -310,9 +311,11 @@ async function overlay(
 
   const timestampMoment = moment.utc(timestamp);
   console.log('UTC TIME: ' + timestampMoment.format('MMM DD YYYY hh:mm A'));
-  const readableTimestamp = timestampMoment
-    .local()
-    .format('MMM DD YYYY hh:mm A');
+  const readableTimestampMoment = timestampMoment.local();
+  const dayOfWeek = readableTimestampMoment.format('dddd');
+  const readableTimestamp = readableTimestampMoment.format(
+    'MMM DD YYYY hh:mm A'
+  );
   console.log('LOCAL TIME: ' + readableTimestamp);
 
   // Add annotation for date time
@@ -323,12 +326,12 @@ async function overlay(
     '-font',
     'Times-New-Roman',
     '-pointsize',
-    '24',
+    '36',
     '-gravity',
-    'south',
+    'north',
     '-annotate',
     '+10+10',
-    `Mountain Time - ${readableTimestamp}`,
+    `Mountain Time - ${dayOfWeek}, ${readableTimestamp}`,
     outputFilename,
   ]);
 
