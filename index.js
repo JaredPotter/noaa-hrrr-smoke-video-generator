@@ -1,3 +1,6 @@
+// NOAA HRRR
+// https://rapidrefresh.noaa.gov/hrrr/
+
 const axios = require('axios');
 const crossSpawn = require('cross-spawn');
 const path = require('path');
