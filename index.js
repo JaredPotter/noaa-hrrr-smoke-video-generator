@@ -431,7 +431,7 @@ async function sleep(ms) {
 if (!isDev) {
   console.log('NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('5 * * * *', async () => {
+  cron.schedule('5 0,6,12,18 * * *', async () => {
     // X:05 - every 5th minute of the hour
     console.log('TIME TO RUN');
 
