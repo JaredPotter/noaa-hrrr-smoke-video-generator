@@ -14,7 +14,7 @@
       "program": "${workspaceFolder}/index.js",
       "args": [
         "dev",
-        "20"
+        "48"
       ]
     }
   ]

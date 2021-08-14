@@ -11,9 +11,16 @@ const cron = require('node-cron');
 const fs = require('fs-extra');
 const blend = require('@mapbox/blend');
 const firebaseAdmin = require('firebase-admin');
+const { v4: uuidv4 } = require('uuid');
 
 const FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME =
   './noaa-hrrr-smoke-firebase-adminsdk-en9p6-8fe174d250.json';
+
+const CODE_TO_TYPE = {
+  sfc_smoke: 'near-surface-smoke',
+  vi_smoke: 'vertically-integrated-smoke',
+  sfc_visibility: 'surface-visibility',
+};
 
 if (!fs.existsSync(FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME)) {
   console.log('FIREBASE SERVICE ACCOUNT FILE MISSING!');
@@ -75,18 +82,13 @@ async function fetchAndSaveNoaaHrrrOverlays(
 ) {
   let availableForecastsLimitReached = false;
 
-  const codeToType = {
-    sfc_smoke: 'near-surface-smoke',
-    vi_smoke: 'vertically-integrated-smoke',
-    sfc_visibility: 'surface-visibility',
-  };
-
-  const typeCodes = Object.keys(codeToType);
+  const typeCodes = Object.keys(CODE_TO_TYPE);
 
   const now = moment().utc();
   now.set('minutes', 0);
   now.set('seconds', 0);
-  now.add(-2, 'hour');
+  // now.add(-2, 'hour');
+  const now = moment('2021-08-13T18:00:00Z').utc();
   const modelrun = now.format();
 
   //adjust for correct numbering
@@ -126,7 +128,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
         1500
       );
 
-      const directory = `${codeToType[typeCode]}/${modelrun}`;
+      const directory = `${CODE_TO_TYPE[typeCode]}/${modelrun}`;
       fs.ensureDirSync(directory);
       const paddedId = String(forecastHour + 1).padStart(4, '0');
       const filename = `overlay-${time}-${paddedId}.png`;
@@ -143,15 +145,25 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
       // Composite with base map tile
       console.log('Now overlaying...');
+      const overlayTypeSplit = CODE_TO_TYPE[typeCode].split('-');
+      const overlayTypeResult = [];
+
+      for (const word of overlayTypeSplit) {
+        overlayTypeResult.push(capitalizeFirstLetter(word));
+      }
+
+      const overlayTypeLabel = overlayTypeResult.join(' ');
+
       await overlay(
         BASE_MAP_FILE_PATH,
         layerFilename,
         `${directory}/final${paddedId}.png`,
-        time
+        time,
+        overlayTypeLabel
       );
 
       console.log('done with image: ' + paddedId);
-      await sleep(10000);
+      // await sleep(10000);
     }
 
     if (availableForecastsLimitReached) {
@@ -161,10 +173,17 @@ async function fetchAndSaveNoaaHrrrOverlays(
     now.add(1, 'hour');
   }
 
+  const forecast = {
+    timestamp: moment(modelrun).utc().unix(),
+    near_surface_smoke_video_url: '',
+    vertically_integrated_smoke_video_url: '',
+    surface_visibility_video_url: '',
+  };
+
   for (let i = 0; i < typeCodes.length; i++) {
     const typeCode = typeCodes[i];
     const timestamp = modelrun.replaceAll(':', '_');
-    const directory = `./${codeToType[typeCode]}/${modelrun}`;
+    const directory = `./${CODE_TO_TYPE[typeCode]}/${modelrun}`;
     const absolutePath = path.resolve(directory);
     const outputVideoFilename = `${absolutePath}/${timestamp}.mp4`;
 
@@ -177,16 +196,38 @@ async function fetchAndSaveNoaaHrrrOverlays(
     }
 
     try {
-      const uploadFileName = `${codeToType[typeCode]}/${modelrun}/${timestamp}.mp4`;
-      const videoUrl = await uploadVideo(uploadFileName);
+      const uploadFileName = `${CODE_TO_TYPE[typeCode]}/${modelrun}/${timestamp}.mp4`;
+      const videoUrl = (await uploadVideo(uploadFileName))[0];
 
-      // TODO: POST to Laravel API
+      switch (typeCode) {
+        case 'sfc_smoke':
+          forecast.near_surface_smoke_video_url = videoUrl;
+          break;
+        case 'vi_smoke':
+          forecast.vertically_integrated_smoke_video_url = videoUrl;
+          break;
+        case 'sfc_visibility':
+          forecast.surface_visibility_video_url = videoUrl;
+          break;
+      }
+
       console.log(videoUrl);
     } catch (error) {
       console.error(error);
       console.log('Failed to upload video. Now exiting!');
       continue;
     }
+  }
+  debugger;
+  try {
+    console.log('POSTing to Laravel API!');
+    await axios.post('https://noaa-hrrr-smoke-api.herokuapp.com/forecasts', {
+      data: forecast,
+    });
+  } catch (error) {
+    console.error(error);
+    console.error('FAIL POSTing to Laravel API. Now quitting.');
+    return;
   }
 
   console.log('FINISHED with all NOAA HRRR overlay fetching');
@@ -236,7 +277,7 @@ async function fetchMapTiles(
 ) {
   const imageBufferList = [];
 
-  const promiseList = [];
+  let promiseList = [];
 
   // const legendUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/legend/hrrr_smoke?var=${typeCode}&level=0`;
   // const legendImageBuffer = await axios(legendUrl);
@@ -245,21 +286,48 @@ async function fetchMapTiles(
     for (let y = startingY; y <= startingY + gridHeight; y++) {
       const imageUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=${typeCode}&x=${x}&y=${y}&z=${zoomLevel}&time=${time}&modelrun=${modelrunTime}&level=0`;
       // console.log(`Fetching ${imageUrl}`);
-      promiseList.push(
-        axios.get(imageUrl, {
-          // responseType: 'image/png',
-          responseType: 'arraybuffer',
-        })
-      );
+      promiseList.push(fetchTile(imageUrl));
     }
   }
 
-  console.log('awaiting all tiles to return...');
-  let imageResponses = await Promise.all(promiseList);
+  const totalRequestCount = gridWidth * gridHeight;
+  let successfullyCompletedRequestCount = 0;
 
-  if (imageResponses[0].status === 204) {
-    console.log('Available forecast limit reached! Wrapping up.');
-    imageResponses = [];
+  let imageResponses = [];
+
+  while (successfullyCompletedRequestCount < totalRequestCount) {
+    console.log('awaiting all tiles to return...');
+    imageResponses = await Promise.all(promiseList);
+
+    promiseList = [];
+
+    const reAttemptUrlList = [];
+
+    for (const response of imageResponses) {
+      if (response.status !== 200) {
+        if (imageResponses[0].status === 204) {
+          console.log('Available forecast limit reached! Wrapping up.');
+
+          return []; // return an empty image buffer array
+        }
+
+        const imageUrl = response.config.url;
+
+        reAttemptUrlList.push(imageUrl);
+      } else {
+        successfullyCompletedRequestCount++;
+      }
+    }
+
+    if (reAttemptUrlList.length > 0) {
+      console.log('We hit the limit. Now sleeping...');
+      debugger;
+      await sleep(5000);
+
+      for (const imageUrl of reAttemptUrlList) {
+        promiseList.push(fetchTile(imageUrl));
+      }
+    }
   }
 
   for (const response of imageResponses) {
@@ -283,6 +351,12 @@ async function fetchMapTiles(
   }
 
   return imageBufferList;
+}
+
+async function fetchTile(url) {
+  return axios.get(url, {
+    responseType: 'arraybuffer',
+  });
 }
 
 async function fetchBaseMapTiles(
@@ -335,9 +409,11 @@ async function overlay(
   backgroundImagePath,
   overlayImagePath,
   outputFilename,
-  timestamp
+  timestamp,
+  overlayTypeLabel
 ) {
-  const tempFilename = 'temp.png';
+  const tempUuid = uuidv4();
+  const tempFilename = `${tempUuid}.png`;
 
   spawnSync('convert', [
     backgroundImagePath,
@@ -373,7 +449,7 @@ async function overlay(
     'north',
     '-annotate',
     '+10+10',
-    `Mountain Time - ${dayOfWeek}, ${readableTimestamp}`,
+    `${overlayTypeLabel} - Mountain Time - ${dayOfWeek}, ${readableTimestamp}`,
     outputFilename,
   ]);
 
@@ -425,6 +501,10 @@ async function uploadVideo(fileName) {
   return downloadUrl;
 }
 
+function capitalizeFirstLetter(string) {
+  return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
 async function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(() => resolve(), ms);
@@ -434,8 +514,7 @@ async function sleep(ms) {
 if (!isDev) {
   console.log('NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('5 0,6,12,18 * * *', async () => {
-    // X:05 - every 5th minute of the hour
+  cron.schedule('55 0,6,12,18 * * *', async () => {
     console.log('TIME TO RUN');
 
     const zoomLevel = 7;
