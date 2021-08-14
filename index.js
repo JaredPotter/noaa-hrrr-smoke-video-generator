@@ -88,7 +88,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
   now.set('minutes', 0);
   now.set('seconds', 0);
   now.add(-1, 'hour');
-  // const now = moment('2021-08-13T18:00:00Z').utc(); // dev only
+  // const now = moment('2021-08-14T00:00:00Z').utc(); // dev only
   const modelrun = now.format();
 
   //adjust for correct numbering
@@ -97,7 +97,6 @@ async function fetchAndSaveNoaaHrrrOverlays(
   for (
     let forecastHour = forecastResumption;
     forecastHour < 48;
-    // forecastHour < 4;
     forecastHour++
   ) {
     const time = now.format();
@@ -163,7 +162,6 @@ async function fetchAndSaveNoaaHrrrOverlays(
       );
 
       console.log('done with image: ' + paddedId);
-      // await sleep(10000);
     }
 
     if (availableForecastsLimitReached) {
@@ -278,6 +276,7 @@ async function fetchMapTiles(
   const imageBufferList = [];
 
   let promiseList = [];
+  const urlList = [];
 
   // const legendUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/legend/hrrr_smoke?var=${typeCode}&level=0`;
   // const legendImageBuffer = await axios(legendUrl);
@@ -287,21 +286,38 @@ async function fetchMapTiles(
       const imageUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=${typeCode}&x=${x}&y=${y}&z=${zoomLevel}&time=${time}&modelrun=${modelrunTime}&level=0`;
       // console.log(`Fetching ${imageUrl}`);
       promiseList.push(fetchTile(imageUrl));
+      urlList.push(imageUrl);
     }
   }
 
-  const totalRequestCount = gridWidth * gridHeight;
+  const totalRequestCount = urlList.length;
   let successfullyCompletedRequestCount = 0;
 
   let imageResponses = [];
 
   while (successfullyCompletedRequestCount < totalRequestCount) {
     console.log('awaiting all tiles to return...');
-    imageResponses = await Promise.all(promiseList);
+
+    try {
+      imageResponses = await Promise.all(promiseList);
+    } catch (error) {
+      console.log('Too fast - take a little break');
+      await sleep(15000);
+
+      promiseList = [];
+
+      console.log(
+        'Re-attempting download of ' + urlList.length + ' tile images'
+      );
+
+      for (const url of urlList) {
+        promiseList.push(fetchTile(url));
+      }
+
+      continue;
+    }
 
     promiseList = [];
-
-    const reAttemptUrlList = [];
 
     for (const response of imageResponses) {
       if (response.status !== 200) {
@@ -310,22 +326,8 @@ async function fetchMapTiles(
 
           return []; // return an empty image buffer array
         }
-
-        const imageUrl = response.config.url;
-
-        reAttemptUrlList.push(imageUrl);
       } else {
         successfullyCompletedRequestCount++;
-      }
-    }
-
-    if (reAttemptUrlList.length > 0) {
-      console.log('We hit the limit. Now sleeping...');
-      debugger;
-      await sleep(5000);
-
-      for (const imageUrl of reAttemptUrlList) {
-        promiseList.push(fetchTile(imageUrl));
       }
     }
   }
