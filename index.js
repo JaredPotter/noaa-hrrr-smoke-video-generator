@@ -88,7 +88,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
   now.set('minutes', 0);
   now.set('seconds', 0);
   // now.add(-2, 'hour');
-  const now = moment('2021-08-13T18:00:00Z').utc();
+  // const now = moment('2021-08-13T18:00:00Z').utc(); // dev only
   const modelrun = now.format();
 
   //adjust for correct numbering
