@@ -87,7 +87,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
   const now = moment().utc();
   now.set('minutes', 0);
   now.set('seconds', 0);
-  // now.add(-2, 'hour');
+  now.add(-1, 'hour');
   // const now = moment('2021-08-13T18:00:00Z').utc(); // dev only
   const modelrun = now.format();
 
@@ -514,7 +514,7 @@ async function sleep(ms) {
 if (!isDev) {
   console.log('NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('55 0,6,12,18 * * *', async () => {
+  cron.schedule('15 1,7,15,19 * * *', async () => {
     console.log('TIME TO RUN');
 
     const zoomLevel = 7;
