@@ -493,6 +493,9 @@ async function generateMp4Video(directory, outputFilename, crf = 25) {
 async function uploadVideo(fileName) {
   const fileResultArray = await bucket.upload(`./${fileName}`, {
     destination: fileName,
+    metadata: {
+      cacheControl: 'max-age=31536000',
+    },
   });
 
   const downloadUrl = await fileResultArray[0].getSignedUrl({
