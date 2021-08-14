@@ -186,7 +186,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
     const outputVideoFilename = `${absolutePath}/${timestamp}.mp4`;
 
     try {
-      await generateMp4Video(absolutePath, outputVideoFilename, 15);
+      console.log('Generating Video...');
+      await generateMp4Video(absolutePath, outputVideoFilename, 20);
     } catch (error) {
       console.error(error);
       console.error('Failed to generate video. Now exiting!');
@@ -194,6 +195,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
     }
 
     try {
+      console.log('Uploading Video...');
+
       const uploadFileName = `${CODE_TO_TYPE[typeCode]}/${modelrun}/${timestamp}.mp4`;
       const videoUrl = (await uploadVideo(uploadFileName))[0];
 
@@ -462,7 +465,7 @@ async function overlay(
 async function generateMp4Video(directory, outputFilename, crf = 25) {
   const flags = [
     '-r', // framerate
-    '8',
+    '4',
     '-f',
     'image2',
     '-s',
@@ -471,7 +474,7 @@ async function generateMp4Video(directory, outputFilename, crf = 25) {
     `${directory}/final%04d.png`,
     '-vcodec',
     'libx264',
-    '-crf',
+    '-crf', // quality (1-25) - lower is higher quality
     crf,
     '-pix_fmt',
     'yuv420p',
@@ -493,8 +496,11 @@ async function generateMp4Video(directory, outputFilename, crf = 25) {
 async function uploadVideo(fileName) {
   const fileResultArray = await bucket.upload(`./${fileName}`, {
     destination: fileName,
-    metadata: {
-      cacheControl: 'max-age=31536000',
+  });
+  await fileResultArray[0].setMetadata({
+    cacheControl: 'public, max-age=31536000, immutable',
+    setMetadata: {
+      cacheControl: 'public, max-age=31536000, immutable',
     },
   });
 
