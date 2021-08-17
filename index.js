@@ -19,7 +19,6 @@ const FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME =
 const CODE_TO_TYPE = {
   sfc_smoke: 'near-surface-smoke',
   vi_smoke: 'vertically-integrated-smoke',
-  sfc_visibility: 'surface-visibility',
 };
 
 if (!fs.existsSync(FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME)) {
@@ -52,6 +51,8 @@ if (forecastResumption > 0) {
 
 if (!!isDev) {
   (async () => {
+    // const is48HourForecast = await is48HourForecastHour();
+
     const zoomLevel = 7;
     const startingX = 19;
     const startingY = 44;
@@ -61,7 +62,19 @@ if (!!isDev) {
     // await changeTransparency('./0002-copy.png', 0.75);
     // await overlay('./0001.png', './0002.png', './composite0001.png');
 
+    // Check if on the 6 hour 48-hour forecast
+    // const now = moment().utc();
+    // now.set('minutes', 0);
+    // now.set('seconds', 0);
+    // now.add(-1, 'hour');
+    const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
+    const modelrun = now.format();
+
+    //adjust for correct numbering
+    now.add(forecastResumption, 'hours');
+
     await fetchAndSaveNoaaHrrrOverlays(
+      now,
       zoomLevel,
       startingX,
       startingY,
@@ -73,7 +86,39 @@ if (!!isDev) {
   })();
 }
 
+async function is48HourForecastHour() {
+  const modelRunNow = moment().utc();
+  modelRunNow.set('minutes', 0);
+  modelRunNow.set('seconds', 0);
+  modelRunNow.add(-1, 'hour');
+  // const modelRunNow = moment('2021-08-17T06:00:00Z').utc(); // dev only
+  const modelrun = modelRunNow.format();
+  const timeMoment = moment(modelRunNow);
+  timeMoment.add(48, 'hours');
+
+  const time = timeMoment.format();
+  debugger;
+
+  try {
+    const url = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=25&y=25&z=5&time=${time}&modelrun=${modelrun}&level=0`;
+    const response = await axios.get(url);
+
+    debugger;
+    if (response.status === 204) {
+      return false;
+    }
+  } catch (error) {
+    console.error(error);
+
+    return false;
+  }
+
+  return true;
+  // const time = startDateTimeMoment.format();
+}
+
 async function fetchAndSaveNoaaHrrrOverlays(
+  startDateTimeMoment,
   zoomLevel,
   startingX,
   startingY,
@@ -84,22 +129,12 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
   const typeCodes = Object.keys(CODE_TO_TYPE);
 
-  const now = moment().utc();
-  now.set('minutes', 0);
-  now.set('seconds', 0);
-  now.add(-1, 'hour');
-  // const now = moment('2021-08-14T00:00:00Z').utc(); // dev only
-  const modelrun = now.format();
-
-  //adjust for correct numbering
-  now.add(forecastResumption, 'hours');
-
   for (
     let forecastHour = forecastResumption;
     forecastHour < 48;
     forecastHour++
   ) {
-    const time = now.format();
+    const time = startDateTimeMoment.format();
 
     for (let i = 0; i < typeCodes.length; i++) {
       const typeCode = typeCodes[i];
@@ -175,7 +210,6 @@ async function fetchAndSaveNoaaHrrrOverlays(
     timestamp: moment(modelrun).utc().unix(),
     near_surface_smoke_video_url: '',
     vertically_integrated_smoke_video_url: '',
-    surface_visibility_video_url: '',
   };
 
   for (let i = 0; i < typeCodes.length; i++) {
@@ -206,9 +240,6 @@ async function fetchAndSaveNoaaHrrrOverlays(
           break;
         case 'vi_smoke':
           forecast.vertically_integrated_smoke_video_url = videoUrl;
-          break;
-        case 'sfc_visibility':
-          forecast.surface_visibility_video_url = videoUrl;
           break;
       }
 
@@ -523,9 +554,9 @@ async function sleep(ms) {
 }
 
 if (!isDev) {
-  console.log('NOAA HRRR SMOKE FETCHER STARTED');
+  console.log('CRON - NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('15 1,7,15,19 * * *', async () => {
+  cron.schedule('30 * * * *', async () => {
     console.log('TIME TO RUN');
 
     const zoomLevel = 7;
@@ -534,7 +565,25 @@ if (!isDev) {
     const gridHeight = 5;
     const gridWidth = 6;
 
+    // Check if on the 6 hour 48-hour forecast
+    const is48HourForecast = await is48HourForecastHour();
+
+    if (!is48HourForecast) {
+      console.log('Current Hour is not 48 hour forecast. Quitting now.');
+      return;
+    }
+
+    const now = moment().utc();
+    now.set('minutes', 0);
+    now.set('seconds', 0);
+
+    // const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
+
+    //adjust for correct numbering
+    now.add(forecastResumption, 'hours');
+
     await fetchAndSaveNoaaHrrrOverlays(
+      now,
       zoomLevel,
       startingX,
       startingY,
