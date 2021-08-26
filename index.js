@@ -190,7 +190,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
   const currentDateTime = moment(startDateTimeMoment);
 
   //adjust for correct numbering
-  // currentDateTime.add(forecastResumption, 'hours');
+  currentDateTime.add(forecastResumption, 'hours');
 
   const typeCodes = Object.keys(CODE_TO_TYPE);
 
@@ -284,7 +284,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
   for (let i = 0; i < typeCodes.length; i++) {
     const typeCode = typeCodes[i];
-    const timestamp = modelrunFormat.replaceAll(':', '_');
+    const timestamp = modelrunFormat.replace(/\:/g, "_");
     const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
     const absolutePath = path.resolve('./' + directory);
     const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_h264.mp4`;
@@ -342,6 +342,18 @@ async function fetchAndSaveNoaaHrrrOverlays(
       console.log('Failed to upload video. Now exiting!');
       continue;
     }
+  }
+    
+  if (
+    !forecast.near_surface_smoke_video_url_h264 ||
+    !forecast.near_surface_smoke_video_url_h265 ||
+    !forecast.near_surface_smoke_video_url_vp9 ||
+    !forecast.vertically_integrated_smoke_video_url_h264 ||
+    !forecast.vertically_integrated_smoke_video_url_h265 ||
+    !forecast.vertically_integrated_smoke_video_url_vp9
+  ) {
+    console.log("Failed to generate / upload videos. Now quitting.");
+    return;
   }
 
   try {
