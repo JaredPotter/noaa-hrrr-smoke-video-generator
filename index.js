@@ -1,6 +1,9 @@
 // NOAA HRRR
 // https://rapidrefresh.noaa.gov/hrrr/
 
+// TODO: calculate CRF
+// https://www.cnblogs.com/lakeone/p/5436481.html
+
 const axios = require('axios');
 const crossSpawn = require('cross-spawn');
 const path = require('path');
@@ -37,8 +40,6 @@ const bucket = firebaseAdmin
   .storage()
   .bucket('gs://noaa-hrrr-smoke.appspot.com');
 
-const BASE_MAP_FILE_PATH = './base-map.png';
-
 const isDev = process.argv[2];
 const arg3 = process.argv[3];
 let forecastResumption = !isNaN(Number(arg3)) ? Number(arg3) : 0;
@@ -49,41 +50,99 @@ if (forecastResumption > 0) {
   forecastResumption = forecastResumption - 1;
 }
 
+const northWestArea = {
+  code: 'north-west',
+  zoomLevel: 7,
+  startingX: 19,
+  startingY: 44,
+  gridHeight: 5,
+  gridWidth: 5,
+};
+
+const utahArea = {
+  code: 'utah',
+  zoomLevel: 8,
+  startingX: 46,
+  startingY: 94,
+  gridHeight: 5,
+  gridWidth: 5,
+};
+
+const coloradoArea = {
+  code: 'colorado',
+  zoomLevel: 8,
+  startingX: 50,
+  startingY: 95,
+  gridHeight: 5,
+  gridWidth: 5,
+};
+
+const AREAS = [utahArea, coloradoArea];
+
 if (!!isDev) {
   (async () => {
     // const is48HourForecast = await is48HourForecastHour();
 
-    const zoomLevel = 7;
-    const startingX = 19;
-    const startingY = 44;
-    const gridHeight = 5;
-    const gridWidth = 6;
-
-    // await changeTransparency('./0002-copy.png', 0.75);
-    // await overlay('./0001.png', './0002.png', './composite0001.png');
-
-    // Check if on the 6 hour 48-hour forecast
-    // const now = moment().utc();
-    // now.set('minutes', 0);
-    // now.set('seconds', 0);
-    // now.add(-1, 'hour');
-    const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
-    const modelrun = now.format();
-
-    //adjust for correct numbering
-    now.add(forecastResumption, 'hours');
-
-    await fetchAndSaveNoaaHrrrOverlays(
-      now,
-      zoomLevel,
-      startingX,
-      startingY,
-      gridHeight,
-      gridWidth
-    );
+    for (const area of AREAS) {
+      await fetchArea(
+        area.zoomLevel,
+        area.startingX,
+        area.startingY,
+        area.gridHeight,
+        area.gridWidth,
+        area.code
+      );
+    }
 
     console.log('DONE');
   })();
+}
+
+async function fetchArea(
+  zoomLevel,
+  startingX,
+  startingY,
+  gridHeight,
+  gridWidth,
+  areaCode
+) {
+  fs.ensureDirSync('area-base-maps');
+  const filename = `./area-base-maps/${areaCode}.png`;
+  const areaBaseMapExists = fs.existsSync(filename);
+
+  if (!areaBaseMapExists) {
+    console.log('Fetching base map for ' + areaCode);
+
+    const tiles = await fetchBaseMapTiles(
+      area.zoomLevel,
+      area.startingX,
+      area.startingY,
+      area.gridHeight,
+      area.gridWidth
+    );
+
+    const completeImageBuffer = await stitchTileImages(tiles, 256, 1536, 1536);
+
+    fs.writeFileSync(filename, completeImageBuffer);
+  }
+
+  // Check if on the 6 hour 48-hour forecast
+  const now = moment().utc();
+  now.set('minutes', 0);
+  now.set('seconds', 0);
+  now.add(-1, 'hour');
+  // const now = moment('2021-08-26T00:00:00Z').utc(); // dev only
+  const startDateTimeMoment = moment(now);
+
+  await fetchAndSaveNoaaHrrrOverlays(
+    startDateTimeMoment,
+    zoomLevel,
+    startingX,
+    startingY,
+    gridHeight,
+    gridWidth,
+    areaCode
+  );
 }
 
 async function is48HourForecastHour() {
@@ -114,7 +173,6 @@ async function is48HourForecastHour() {
   }
 
   return true;
-  // const time = startDateTimeMoment.format();
 }
 
 async function fetchAndSaveNoaaHrrrOverlays(
@@ -123,9 +181,16 @@ async function fetchAndSaveNoaaHrrrOverlays(
   startingX,
   startingY,
   gridHeight,
-  gridWidth
+  gridWidth,
+  areaCode
 ) {
   let availableForecastsLimitReached = false;
+  const modelrun = moment(startDateTimeMoment);
+  const modelrunFormat = modelrun.format();
+  const currentDateTime = moment(startDateTimeMoment);
+
+  //adjust for correct numbering
+  // currentDateTime.add(forecastResumption, 'hours');
 
   const typeCodes = Object.keys(CODE_TO_TYPE);
 
@@ -134,7 +199,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
     forecastHour < 48;
     forecastHour++
   ) {
-    const time = startDateTimeMoment.format();
+    const time = currentDateTime.format();
 
     for (let i = 0; i < typeCodes.length; i++) {
       const typeCode = typeCodes[i];
@@ -146,7 +211,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
         gridHeight,
         gridWidth,
         time,
-        modelrun
+        modelrunFormat
       );
 
       if (tiles.length === 0) {
@@ -158,11 +223,11 @@ async function fetchAndSaveNoaaHrrrOverlays(
       const completeImageBuffer = await stitchTileImages(
         tiles,
         256,
-        1500,
-        1500
+        1536,
+        1536
       );
 
-      const directory = `${CODE_TO_TYPE[typeCode]}/${modelrun}`;
+      const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
       fs.ensureDirSync(directory);
       const paddedId = String(forecastHour + 1).padStart(4, '0');
       const filename = `overlay-${time}-${paddedId}.png`;
@@ -189,7 +254,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       const overlayTypeLabel = overlayTypeResult.join(' ');
 
       await overlay(
-        BASE_MAP_FILE_PATH,
+        `./area-base-maps/${areaCode}.png`,
         layerFilename,
         `${directory}/final${paddedId}.png`,
         time,
@@ -203,25 +268,44 @@ async function fetchAndSaveNoaaHrrrOverlays(
       break;
     }
 
-    now.add(1, 'hour');
+    currentDateTime.add(1, 'hour');
   }
 
   const forecast = {
-    timestamp: moment(modelrun).utc().unix(),
-    near_surface_smoke_video_url: '',
-    vertically_integrated_smoke_video_url: '',
+    areaCode,
+    timestamp: moment(modelrunFormat).utc().unix(),
+    near_surface_smoke_video_url_h264: '',
+    near_surface_smoke_video_url_h265: '',
+    near_surface_smoke_video_url_vp9: '',
+    vertically_integrated_smoke_video_url_h264: '',
+    vertically_integrated_smoke_video_url_h265: '',
+    vertically_integrated_smoke_video_url_vp9: '',
   };
 
   for (let i = 0; i < typeCodes.length; i++) {
     const typeCode = typeCodes[i];
-    const timestamp = modelrun.replaceAll(':', '_');
-    const directory = `./${CODE_TO_TYPE[typeCode]}/${modelrun}`;
-    const absolutePath = path.resolve(directory);
-    const outputVideoFilename = `${absolutePath}/${timestamp}.mp4`;
+    const timestamp = modelrunFormat.replaceAll(':', '_');
+    const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
+    const absolutePath = path.resolve('./' + directory);
+    const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_h264.mp4`;
+    const outputVideoFilenameH265 = `${absolutePath}/${timestamp}_h265.mp4`;
+    const outputVideoFilenameVp9Webm = `${absolutePath}/${timestamp}_vp9.webm`;
 
     try {
-      console.log('Generating Video...');
-      await generateMp4Video(absolutePath, outputVideoFilename, 20);
+      console.log('Generating Videos...');
+      await generateMp4Video(
+        absolutePath,
+        outputVideoFilenameH264,
+        'libx264',
+        26
+      );
+      await generateMp4Video(
+        absolutePath,
+        outputVideoFilenameH265,
+        'libx265',
+        31
+      );
+      await generateVp9WebmVideo(absolutePath, outputVideoFilenameVp9Webm, 34);
     } catch (error) {
       console.error(error);
       console.error('Failed to generate video. Now exiting!');
@@ -231,26 +315,35 @@ async function fetchAndSaveNoaaHrrrOverlays(
     try {
       console.log('Uploading Video...');
 
-      const uploadFileName = `${CODE_TO_TYPE[typeCode]}/${modelrun}/${timestamp}.mp4`;
-      const videoUrl = (await uploadVideo(uploadFileName))[0];
+      const videoUrlH264 = (
+        await uploadVideo(`${directory}/${timestamp}_h264.mp4`)
+      )[0];
+      const videoUrlH265 = (
+        await uploadVideo(`${directory}/${timestamp}_h265.mp4`)
+      )[0];
+      const videoUrlVp9 = (
+        await uploadVideo(`${directory}/${timestamp}_vp9.webm`)
+      )[0];
 
       switch (typeCode) {
         case 'sfc_smoke':
-          forecast.near_surface_smoke_video_url = videoUrl;
+          forecast.near_surface_smoke_video_url_h264 = videoUrlH264;
+          forecast.near_surface_smoke_video_url_h265 = videoUrlH265;
+          forecast.near_surface_smoke_video_url_vp9 = videoUrlVp9;
           break;
         case 'vi_smoke':
-          forecast.vertically_integrated_smoke_video_url = videoUrl;
+          forecast.vertically_integrated_smoke_video_url_h264 = videoUrlH264;
+          forecast.vertically_integrated_smoke_video_url_h265 = videoUrlH265;
+          forecast.vertically_integrated_smoke_video_url_vp9 = videoUrlVp9;
           break;
       }
-
-      console.log(videoUrl);
     } catch (error) {
       console.error(error);
       console.log('Failed to upload video. Now exiting!');
       continue;
     }
   }
-  debugger;
+
   try {
     console.log('POSTing to Laravel API!');
     await axios.post('https://noaa-hrrr-smoke-api.herokuapp.com/forecasts', {
@@ -336,7 +429,7 @@ async function fetchMapTiles(
       imageResponses = await Promise.all(promiseList);
     } catch (error) {
       console.log('Too fast - take a little break');
-      await sleep(15000);
+      await sleep(15360);
 
       promiseList = [];
 
@@ -404,23 +497,72 @@ async function fetchBaseMapTiles(
 ) {
   const imageBufferList = [];
 
+  let promiseList = [];
+  const urlList = [];
+
   for (let x = startingX; x <= startingX + gridWidth; x++) {
     for (let y = startingY; y <= startingY + gridHeight; y++) {
       const imageUrl = `https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${zoomLevel}/${y}/${x}`;
 
-      console.log(`Fetching ${imageUrl}`);
-      const response = await axios.get(imageUrl, {
-        responseType: 'arraybuffer',
-      });
-
-      const imageBuffer = Buffer.from(response.data, 'binary');
-
-      imageBufferList.push({
-        buffer: imageBuffer,
-        x: x - startingX,
-        y: y - startingY,
-      });
+      promiseList.push(fetchTile(imageUrl));
+      urlList.push(imageUrl);
     }
+  }
+
+  const totalRequestCount = urlList.length;
+  let successfullyCompletedRequestCount = 0;
+
+  let imageResponses = [];
+
+  while (successfullyCompletedRequestCount < totalRequestCount) {
+    console.log('awaiting all tiles to return...');
+
+    try {
+      imageResponses = await Promise.all(promiseList);
+    } catch (error) {
+      console.log('Too fast - take a little break');
+      await sleep(15360);
+
+      promiseList = [];
+
+      console.log(
+        'Re-attempting download of ' + urlList.length + ' tile images'
+      );
+
+      for (const url of urlList) {
+        promiseList.push(fetchTile(url));
+      }
+
+      continue;
+    }
+
+    promiseList = [];
+
+    for (const response of imageResponses) {
+      if (response.status !== 200) {
+        if (imageResponses[0].status === 204) {
+          console.log('Available forecast limit reached! Wrapping up.');
+
+          return []; // return an empty image buffer array
+        }
+      } else {
+        successfullyCompletedRequestCount++;
+      }
+    }
+  }
+
+  for (const response of imageResponses) {
+    const url = response.config.url;
+    const urlSplit = url.split('/');
+    const x = Number(urlSplit[11]);
+    const y = Number(urlSplit[10]);
+    const imageBuffer = Buffer.from(response.data, 'binary');
+
+    imageBufferList.push({
+      buffer: imageBuffer,
+      x: x - startingX,
+      y: y - startingY,
+    });
   }
 
   return imageBufferList;
@@ -491,24 +633,69 @@ async function overlay(
 
   fs.unlinkSync(tempFilename);
 }
-// ffmpeg -r 8 -f image2 -s 1500x1500 -i ./near-surface-smoke/2021-08-10T05_00_00Z/final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart ./near-surface-smoke/2021-08-10T05_00_00Z/near-surface-smoke-2021-08-10T05_00_00Z.mp4
-// ffmpeg -r 8 -f image2 -s 1500x1500 -i final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart near-surface-smoke-2021-08-10T05_00_00Z.mp4
-async function generateMp4Video(directory, outputFilename, crf = 25) {
+
+// fast start
+// ffmpeg -i origin.mp4 -acodec copy -vcodec copy -movflags faststart fast_start.mp4
+// ffmpeg -r 8 -f image2 -s 1536x1536 -i ./near-surface-smoke/2021-08-10T05_00_00Z/final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart ./near-surface-smoke/2021-08-10T05_00_00Z/near-surface-smoke-2021-08-10T05_00_00Z.mp4
+// ffmpeg -r 8 -f image2 -s 1536x1536 -i final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart near-surface-smoke-2021-08-10T05_00_00Z.mp4
+// https://trac.ffmpeg.org/wiki/Encode/H.265
+async function generateMp4Video(
+  directory,
+  outputFilename,
+  encoder = 'libx264',
+  crf = 25
+) {
   const flags = [
     '-r', // framerate
     '4',
     '-f',
     'image2',
     '-s',
-    '1500x1500',
+    '1536x1536',
     '-i',
     `${directory}/final%04d.png`,
     '-vcodec',
-    'libx264',
-    '-crf', // quality (1-25) - lower is higher quality
+    encoder,
+    '-crf', // h.264 quality (0 and 51) - lower number is higher quality output
     crf,
     '-pix_fmt',
     'yuv420p',
+    '-y', // automatic overwrite
+    '-movflags',
+    'faststart',
+  ];
+
+  if (encoder === 'libx265') {
+    flags.push('-tag:v', 'hvc1'); // Enable quicktime playback
+  }
+
+  flags.push(outputFilename);
+
+  console.log(`ffmpeg ${flags.join(' ')}`);
+
+  spawnSync('ffmpeg', flags);
+}
+
+// https://trac.ffmpeg.org/wiki/Encode/VP9
+async function generateVp9WebmVideo(directory, outputFilename, crf = 31) {
+  const flags = [
+    '-r', // framerate
+    '4',
+    // '-f',
+    // 'image2',
+    '-s',
+    '1536x1536',
+    '-i',
+    `${directory}/final%04d.png`,
+    '-vcodec',
+    'libvpx-vp9',
+    '-crf', // quality (0-63) - lower is higher quality
+    crf,
+    // '-pass',
+    // 2,
+    '-pix_fmt',
+    'yuv420p',
+    '-y', // automatic overwrite
     '-movflags',
     'faststart',
     outputFilename,
@@ -517,15 +704,10 @@ async function generateMp4Video(directory, outputFilename, crf = 25) {
   console.log(`ffmpeg ${flags.join(' ')}`);
 
   spawnSync('ffmpeg', flags);
-
-  //ffmpeg -r 60 -f image2 -s 1920x1080 -i pic%04d.png -vcodec libx264 -crf 25  -pix_fmt yuv420p test.mp4
-
-  // fast start
-  // ffmpeg -i origin.mp4 -acodec copy -vcodec copy -movflags faststart fast_start.mp4
 }
 
 async function uploadVideo(fileName) {
-  const fileResultArray = await bucket.upload(`./${fileName}`, {
+  const fileResultArray = await bucket.upload(fileName, {
     destination: fileName,
   });
   await fileResultArray[0].setMetadata({
@@ -556,14 +738,8 @@ async function sleep(ms) {
 if (!isDev) {
   console.log('CRON - NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('30 * * * *', async () => {
+  cron.schedule('45 1,7,13,19 * * *', async () => {
     console.log('TIME TO RUN');
-
-    const zoomLevel = 7;
-    const startingX = 19;
-    const startingY = 44;
-    const gridHeight = 5;
-    const gridWidth = 6;
 
     // Check if on the 6 hour 48-hour forecast
     const is48HourForecast = await is48HourForecastHour();
@@ -582,13 +758,15 @@ if (!isDev) {
     //adjust for correct numbering
     now.add(forecastResumption, 'hours');
 
-    await fetchAndSaveNoaaHrrrOverlays(
-      now,
-      zoomLevel,
-      startingX,
-      startingY,
-      gridHeight,
-      gridWidth
-    );
+    for (const area of AREAS) {
+      await fetchArea(
+        area.zoomLevel,
+        area.startingX,
+        area.startingY,
+        area.gridHeight,
+        area.gridWidth,
+        area.code
+      );
+    }
   });
 }

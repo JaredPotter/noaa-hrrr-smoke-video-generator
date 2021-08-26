@@ -13,8 +13,7 @@
       ],
       "program": "${workspaceFolder}/index.js",
       "args": [
-        "dev",
-        "0"
+        "dev"
       ]
     }
   ]
