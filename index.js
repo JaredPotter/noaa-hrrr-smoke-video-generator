@@ -5,10 +5,8 @@
 // https://www.cnblogs.com/lakeone/p/5436481.html
 
 const axios = require("axios");
-const crossSpawn = require("cross-spawn");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const crossSpawnSync = crossSpawn.sync;
 const moment = require("moment");
 const cron = require("node-cron");
 const fs = require("fs-extra");
@@ -50,6 +48,15 @@ if (forecastResumption > 0) {
   forecastResumption = forecastResumption - 1;
 }
 
+const unitedStatesArea = {
+  code: "united-states",
+  zoomLevel: 5,
+  startingX: 4,
+  startingY: 9,
+  gridHeight: 5,
+  gridWidth: 5,
+};
+
 const northWestArea = {
   code: "north-west",
   zoomLevel: 7,
@@ -77,7 +84,23 @@ const coloradoArea = {
   gridWidth: 5,
 };
 
-const AREAS = [utahArea, coloradoArea];
+const newMexicoArea = {
+  code: "new-mexico",
+  zoomLevel: 8,
+  startingX: 50,
+  startingY: 99,
+  gridHeight: 5,
+  gridWidth: 5,
+};
+
+const AREAS = [
+  utahArea,
+  northWestArea,
+  coloradoArea,
+  newMexicoArea,
+  unitedStatesArea,
+];
+// const AREAS = [unitedStatesArea];
 
 if (!!isDev) {
   (async () => {
@@ -88,6 +111,16 @@ if (!!isDev) {
       return;
     }
 
+    const now = moment().utc();
+    now.set("minutes", 0);
+    now.set("seconds", 0);
+    now.add(-1, "hour");
+
+    // const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
+
+    //adjust for correct numbering
+    now.add(forecastResumption, "hours");
+
     for (const area of AREAS) {
       await fetchArea(
         area.zoomLevel,
@@ -95,7 +128,8 @@ if (!!isDev) {
         area.startingY,
         area.gridHeight,
         area.gridWidth,
-        area.code
+        area.code,
+        now
       );
     }
 
@@ -109,7 +143,8 @@ async function fetchArea(
   startingY,
   gridHeight,
   gridWidth,
-  areaCode
+  areaCode,
+  now
 ) {
   fs.ensureDirSync("area-base-maps");
   const filename = `./area-base-maps/${areaCode}.png`;
@@ -119,11 +154,11 @@ async function fetchArea(
     console.log("Fetching base map for " + areaCode);
 
     const tiles = await fetchBaseMapTiles(
-      area.zoomLevel,
-      area.startingX,
-      area.startingY,
-      area.gridHeight,
-      area.gridWidth
+      zoomLevel,
+      startingX,
+      startingY,
+      gridHeight,
+      gridWidth
     );
 
     const completeImageBuffer = await stitchTileImages(tiles, 256, 1536, 1536);
@@ -131,12 +166,6 @@ async function fetchArea(
     fs.writeFileSync(filename, completeImageBuffer);
   }
 
-  // Check if on the 6 hour 48-hour forecast
-  const now = moment().utc();
-  now.set("minutes", 0);
-  now.set("seconds", 0);
-  now.add(-1, "hour");
-  // const now = moment('2021-08-26T00:00:00Z').utc(); // dev only
   const startDateTimeMoment = moment(now);
 
   await fetchAndSaveNoaaHrrrOverlays(
@@ -783,7 +812,8 @@ if (!isDev) {
         area.startingY,
         area.gridHeight,
         area.gridWidth,
-        area.code
+        area.code,
+        now
       );
     }
   });
