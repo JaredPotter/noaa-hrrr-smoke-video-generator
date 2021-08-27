@@ -81,7 +81,12 @@ const AREAS = [utahArea, coloradoArea];
 
 if (!!isDev) {
   (async () => {
-    // const is48HourForecast = await is48HourForecastHour();
+    const is48HourForecast = await is48HourForecastHour();
+
+    if (!is48HourForecast) {
+      console.log("Current Hour is not 48 hour forecast. Quitting now.");
+      return;
+    }
 
     for (const area of AREAS) {
       await fetchArea(
@@ -156,10 +161,11 @@ async function is48HourForecastHour() {
   timeMoment.add(48, 'hours');
 
   const time = timeMoment.format();
-  debugger;
+  console.log(`UTC - ${timeMoment.format("MMM DD, hh:mma")}`);
 
   try {
     const url = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=25&y=25&z=5&time=${time}&modelrun=${modelrun}&level=0`;
+    console.log("Checking if is 48 hour forecast time - " + url);
     const response = await axios.get(url);
 
     debugger;
@@ -750,7 +756,7 @@ async function sleep(ms) {
 if (!isDev) {
   console.log('CRON - NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('45 1,7,13,19 * * *', async () => {
+  cron.schedule('58 1,7,13,19 * * *', async () => {
     console.log('TIME TO RUN');
 
     // Check if on the 6 hour 48-hour forecast
@@ -764,6 +770,7 @@ if (!isDev) {
     const now = moment().utc();
     now.set('minutes', 0);
     now.set('seconds', 0);
+    now.add(-1, "hour");
 
     // const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
 
