@@ -114,7 +114,7 @@ if (!!isDev) {
     // now.set("minutes", 0);
     // now.set("seconds", 0);
     // now.add(-1, "hour");
-    const now = moment("2021-08-29T12:00:00Z").utc(); // dev only.
+    const now = moment("2021-08-29T18:00:00Z").utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, "hours");
@@ -650,7 +650,7 @@ async function fetchBaseMapTiles(
     const urlSplit = url.split("/");
     const x = Number(urlSplit[11]);
     const y = Number(urlSplit[10]);
-    const imageBuffer = Buffer.from(response.data, "binary");
+    const imageBuffer = Buffer.from(response.data, "arraybuffer");
 
     imageBufferList.push({
       buffer: imageBuffer,
