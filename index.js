@@ -6,7 +6,7 @@
 
 const axios = require("axios");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawnSync, exec } = require("child_process");
 const moment = require("moment");
 const cron = require("node-cron");
 const fs = require("fs-extra");
@@ -100,28 +100,28 @@ const AREAS = [
   newMexicoArea,
   unitedStatesArea,
 ];
-// const AREAS = [unitedStatesArea];
 
 if (!!isDev) {
   (async () => {
-    const is48HourForecast = await is48HourForecastHour();
+    // const is48HourForecast = await is48HourForecastHour();
 
-    if (!is48HourForecast) {
-      console.log("Current Hour is not 48 hour forecast. Quitting now.");
-      return;
-    }
+    // if (!is48HourForecast) {
+    //   console.log("Current Hour is not 48 hour forecast. Quitting now.");
+    //   return;
+    // }
 
-    const now = moment().utc();
-    now.set("minutes", 0);
-    now.set("seconds", 0);
-    now.add(-1, "hour");
-
-    // const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
+    // const now = moment().utc();
+    // now.set("minutes", 0);
+    // now.set("seconds", 0);
+    // now.add(-1, "hour");
+    const now = moment("2021-08-29T12:00:00Z").utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, "hours");
 
     for (const area of AREAS) {
+      console.log("Fetching area - " + area);
+
       await fetchArea(
         area.zoomLevel,
         area.startingX,
@@ -218,66 +218,66 @@ async function fetchAndSaveNoaaHrrrOverlays(
   gridWidth,
   areaCode
 ) {
-  let availableForecastsLimitReached = false;
   const modelrun = moment(startDateTimeMoment);
   const modelrunFormat = modelrun.format();
   const currentDateTime = moment(startDateTimeMoment);
 
   //adjust for correct numbering
-  currentDateTime.add(forecastResumption, "hours");
+  // currentDateTime.add(forecastResumption, 'hours');
 
   const typeCodes = Object.keys(CODE_TO_TYPE);
 
-  for (
-    let forecastHour = forecastResumption;
-    forecastHour < 48;
-    forecastHour++
-  ) {
-    const time = currentDateTime.format();
+  for (let i = 0; i < typeCodes.length; i++) {
+    const typeCode = typeCodes[i];
+    const imageBufferLists = await fetchMapTiles(
+      typeCode,
+      zoomLevel,
+      startingX,
+      startingY,
+      gridHeight,
+      gridWidth,
+      modelrunFormat
+    );
 
-    for (let i = 0; i < typeCodes.length; i++) {
-      const typeCode = typeCodes[i];
-      const tiles = await fetchMapTiles(
-        typeCode,
-        zoomLevel,
-        startingX,
-        startingY,
-        gridHeight,
-        gridWidth,
-        time,
-        modelrunFormat
-      );
+    const smokeLayerFilenames = [];
+    let index = 0;
+    const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
+    fs.ensureDirSync(directory);
 
-      if (tiles.length === 0) {
-        availableForecastsLimitReached = true;
-        break;
-      }
-
-      console.log("Snitching together tile images...");
-      const completeImageBuffer = await stitchTileImages(
-        tiles,
+    console.log("Snitching together tile images...");
+    for (const imageBuffers of imageBufferLists) {
+      const completedImageBuffer = await stitchTileImages(
+        imageBuffers,
         256,
         1536,
         1536
       );
-
-      const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
-      fs.ensureDirSync(directory);
-      const paddedId = String(forecastHour + 1).padStart(4, "0");
-      const filename = `overlay-${time}-${paddedId}.png`;
+      const paddedId = String(index + 1).padStart(4, "0");
+      const filename = `smoke-overlay-${paddedId}.png`;
 
       console.log("Saving... " + directory + "/" + filename);
 
-      const layerFilename = `${directory}/${filename}`;
+      const smokeLayerFilename = `${directory}/${filename}`;
 
-      fs.writeFileSync(layerFilename, completeImageBuffer);
+      smokeLayerFilenames.push(smokeLayerFilename);
 
-      // Adjust overlay transparency to 75%
-      console.log("Now changing transparency...");
-      await changeTransparency(layerFilename, 0.75);
+      fs.writeFileSync(smokeLayerFilename, completedImageBuffer);
 
-      // Composite with base map tile
-      console.log("Now overlaying...");
+      index++;
+    }
+
+    // Adjust overlay transparency to 75%
+    console.log("Now changing transparency...");
+    for (const smokeLayerFilename of smokeLayerFilenames) {
+      await changeTransparency(smokeLayerFilename, 0.75);
+    }
+
+    const time = moment(currentDateTime);
+    index = 0;
+
+    // Compose smoke layer with with base map tile
+    console.log("Now overlaying base map, smoke layer, and annotation text...");
+    for (const smokeLayerFilename of smokeLayerFilenames) {
       const overlayTypeSplit = CODE_TO_TYPE[typeCode].split("-");
       const overlayTypeResult = [];
 
@@ -286,23 +286,19 @@ async function fetchAndSaveNoaaHrrrOverlays(
       }
 
       const overlayTypeLabel = overlayTypeResult.join(" ");
+      const paddedId = String(index + 1).padStart(4, "0");
 
-      await overlay(
+      overlay(
         `./area-base-maps/${areaCode}.png`,
-        layerFilename,
+        smokeLayerFilename,
         `${directory}/final${paddedId}.png`,
         time,
         overlayTypeLabel
       );
 
-      console.log("done with image: " + paddedId);
+      time.add(1, "hour");
+      index++;
     }
-
-    if (availableForecastsLimitReached) {
-      break;
-    }
-
-    currentDateTime.add(1, "hour");
   }
 
   const forecast = {
@@ -345,6 +341,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
       console.error("Failed to generate video. Now exiting!");
       continue;
     }
+
+    cleanupImageFiles(directory);
 
     try {
       console.log("Uploading Video...");
@@ -411,6 +409,7 @@ async function stitchTileImages(imageBufferList, tileSize, height, width) {
   }
 
   return new Promise((resolve, reject) => {
+    // https://www.npmjs.com/package/@mapbox/blend
     blend(
       imageBufferList,
       {
@@ -421,6 +420,7 @@ async function stitchTileImages(imageBufferList, tileSize, height, width) {
       },
       (error, result) => {
         if (error) {
+          console.error(error);
           reject(error);
           return;
         }
@@ -443,36 +443,61 @@ async function fetchMapTiles(
   startingY,
   gridHeight,
   gridWidth,
-  time, // 2021-08-10T00:00:00Z FORMAT
   modelrunTime // 2021-08-10T00:00:00Z FORMAT
 ) {
-  const imageBufferList = [];
-
   let promiseList = [];
   const urlList = [];
 
-  // const legendUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/legend/hrrr_smoke?var=${typeCode}&level=0`;
-  // const legendImageBuffer = await axios(legendUrl);
-  // https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=8&y=13&z=5&time=2021-08-10T22:00:00.000Z&modelrun=2021-08-10T05:00:00Z&level=0
-  for (let x = startingX; x <= startingX + gridWidth; x++) {
-    for (let y = startingY; y <= startingY + gridHeight; y++) {
-      const imageUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=${typeCode}&x=${x}&y=${y}&z=${zoomLevel}&time=${time}&modelrun=${modelrunTime}&level=0`;
-      // console.log(`Fetching ${imageUrl}`);
-      promiseList.push(fetchTile(imageUrl));
-      urlList.push(imageUrl);
+  const currentDateTime = moment(modelrunTime).utc();
+
+  for (let forecastHour = 0; forecastHour < 48; forecastHour++) {
+    const time = currentDateTime.format();
+    // const legendUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/legend/hrrr_smoke?var=${typeCode}&level=0`;
+    // const legendImageBuffer = await axios(legendUrl);
+    // https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=8&y=13&z=5&time=2021-08-10T22:00:00.000Z&modelrun=2021-08-10T05:00:00Z&level=0
+    for (let x = startingX; x <= startingX + gridWidth; x++) {
+      for (let y = startingY; y <= startingY + gridHeight; y++) {
+        const imageUrl = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=${typeCode}&x=${x}&y=${y}&z=${zoomLevel}&time=${time}&modelrun=${modelrunTime}&level=0`;
+
+        urlList.push(imageUrl);
+      }
     }
+
+    currentDateTime.add(1, "hour");
   }
 
   const totalRequestCount = urlList.length;
-  let successfullyCompletedRequestCount = 0;
 
+  console.log(totalRequestCount + " requests");
+
+  const requestsPerFetch = 180;
   let imageResponses = [];
+  let offset = 0;
 
-  while (successfullyCompletedRequestCount < totalRequestCount) {
-    console.log("awaiting all tiles to return...");
+  while (imageResponses.length < totalRequestCount) {
+    console.log("imageResponses.length: " + imageResponses.length);
+    const startIndex = offset
+      ? offset * requestsPerFetch
+      : offset * requestsPerFetch;
+    const endingIndex = offset
+      ? (offset + 1) * requestsPerFetch
+      : (offset + 1) * requestsPerFetch;
+
+    const requests = urlList.slice(startIndex, endingIndex);
+    console.log(
+      `Requesting ${startIndex} through ${endingIndex - 1} inclusive`
+    );
+
+    for (const request of requests) {
+      promiseList.push(fetchTile(request));
+    }
 
     try {
-      imageResponses = await Promise.all(promiseList);
+      console.log("awaiting requests to return...");
+      const tempImageResponses = await Promise.all(promiseList);
+      imageResponses.push(...tempImageResponses);
+
+      await sleep(4000);
     } catch (error) {
       console.log("Too fast - take a little break");
       await sleep(15360);
@@ -480,30 +505,33 @@ async function fetchMapTiles(
       promiseList = [];
 
       console.log(
-        "Re-attempting download of " + urlList.length + " tile images"
+        "Re-attempting download of " + requests.length + " tile images"
       );
-
-      for (const url of urlList) {
-        promiseList.push(fetchTile(url));
-      }
 
       continue;
     }
 
     promiseList = [];
 
+    offset = offset + 1;
+
     for (const response of imageResponses) {
       if (response.status !== 200) {
         if (imageResponses[0].status === 204) {
-          console.log("Available forecast limit reached! Wrapping up.");
+          console.log("Image response - 204 - No Content");
+          debugger;
 
           return []; // return an empty image buffer array
         }
       } else {
-        successfullyCompletedRequestCount++;
       }
     }
   }
+
+  const imageBufferLists = [];
+
+  // Image responses may return out of order.
+  const tileImageMap = new Map();
 
   for (const response of imageResponses) {
     const url = response.config.url;
@@ -515,22 +543,42 @@ async function fetchMapTiles(
     // get url parameters
     const x = Number(search_params.get("x"));
     const y = Number(search_params.get("y"));
+    const time = search_params.get("time");
 
     const imageBuffer = Buffer.from(response.data, "binary");
 
-    imageBufferList.push({
-      buffer: imageBuffer,
-      x: x - startingX,
-      y: y - startingY,
-    });
+    if (tileImageMap.get(time)) {
+      tileImageMap.get(time).push({
+        time,
+        buffer: imageBuffer,
+        x: x - startingX,
+        y: y - startingY,
+      });
+    } else {
+      tileImageMap.set(time, [
+        {
+          time,
+          buffer: imageBuffer,
+          x: x - startingX,
+          y: y - startingY,
+        },
+      ]);
+    }
   }
 
-  return imageBufferList;
+  tileImageMap.forEach((listOfImageBufferObjects) => {
+    imageBufferLists.push(listOfImageBufferObjects);
+  });
+
+  return imageBufferLists;
 }
 
 async function fetchTile(url) {
   return axios.get(url, {
     responseType: "arraybuffer",
+    headers: {
+      "Content-Type": "image/png",
+    },
   });
 }
 
@@ -629,7 +677,7 @@ async function changeTransparency(imagePath, opacity = 0.75) {
 }
 
 // convert 0001.png 0002.png -gravity center -background None -layers Flatten composite.png
-async function overlay(
+function overlay(
   backgroundImagePath,
   overlayImagePath,
   outputFilename,
@@ -637,7 +685,8 @@ async function overlay(
   overlayTypeLabel
 ) {
   const tempUuid = uuidv4();
-  const tempFilename = `${tempUuid}.png`;
+  fs.ensureDirSync("./temp");
+  const tempFilename = `./temp/${tempUuid}.png`;
 
   spawnSync("convert", [
     backgroundImagePath,
@@ -652,13 +701,13 @@ async function overlay(
   ]);
 
   const timestampMoment = moment.utc(timestamp);
-  console.log("UTC TIME: " + timestampMoment.format("MMM DD YYYY hh:mm A"));
+  // console.log('UTC TIME: ' + timestampMoment.format('MMM DD YYYY hh:mm A'));
   const readableTimestampMoment = timestampMoment.local();
   const dayOfWeek = readableTimestampMoment.format("dddd");
   const readableTimestamp = readableTimestampMoment.format(
     "MMM DD YYYY hh:mm A"
   );
-  console.log("LOCAL TIME: " + readableTimestamp);
+  // console.log('LOCAL TIME: ' + readableTimestamp);
 
   // Add annotation for date time
   spawnSync("convert", [
@@ -799,13 +848,14 @@ if (!isDev) {
     now.set("minutes", 0);
     now.set("seconds", 0);
     now.add(-1, "hour");
-
-    // const now = moment('2021-08-17T06:00:00Z').utc(); // dev only
+    // const now = moment("2021-08-29T12:00:00Z").utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, "hours");
 
     for (const area of AREAS) {
+      console.log("Fetching area - " + area);
+
       await fetchArea(
         area.zoomLevel,
         area.startingX,
@@ -816,5 +866,27 @@ if (!isDev) {
         now
       );
     }
+  });
+}
+
+async function cleanupImageFiles(directory) {
+  const regex = /.*\.png/;
+
+  const filenames = fs.readdirSync(directory);
+  const imageFilenames = filenames.filter((filename) => regex.test(filename));
+
+  imageFilenames.map((filename) => fs.unlinkSync(`${directory}/${filename}`));
+}
+
+async function execPromise(command, flags) {
+  return new Promise((resolve, reject) => {
+    exec(command, flags, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
   });
 }
