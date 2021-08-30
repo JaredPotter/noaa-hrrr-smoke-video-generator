@@ -6,7 +6,7 @@
 
 const axios = require('axios');
 const path = require('path');
-const { spawnSync, exec } = require('child_process');
+const { spawnSync, execFile } = require('child_process');
 const moment = require('moment');
 const cron = require('node-cron');
 const fs = require('fs-extra');
@@ -249,45 +249,72 @@ async function fetchAndSaveNoaaHrrrOverlays(
       modelrunFormat
     );
 
-    const smokeLayerFilenames = [];
-    let index = 0;
+    let smokeLayerFilenames = [];
     const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
     fs.ensureDirSync(directory);
 
     console.log('Snitching together tile images...');
-    for (const imageBuffers of imageBufferLists) {
+    for (let i = 0; i < imageBufferLists.length; i++) {
+      const imageBuffers = imageBufferLists[i];
       const completedImageBuffer = await stitchTileImages(
         imageBuffers,
         256,
         1536,
         1536
       );
-      const paddedId = String(index + 1).padStart(4, '0');
-      const filename = `smoke-overlay-${paddedId}.png`;
+      const paddedId = String(i + 1).padStart(4, '0');
+      const smokeLayerFilename = `smoke-overlay-${paddedId}.png`;
 
-      console.log('Saving... ' + directory + '/' + filename);
-
-      const smokeLayerFilename = `${directory}/${filename}`;
+      console.log('Saving... ' + directory + '/' + smokeLayerFilename);
 
       smokeLayerFilenames.push(smokeLayerFilename);
 
-      fs.writeFileSync(smokeLayerFilename, completedImageBuffer);
+      const fullFilePath = `./${directory}/${smokeLayerFilename}`;
 
-      index++;
+      fs.writeFileSync(fullFilePath, completedImageBuffer);
     }
+
+    smokeLayerFilenames = fs.readdirSync('./' + directory);
 
     // Adjust overlay transparency to 75%
     console.log('Now changing transparency...');
     for (const smokeLayerFilename of smokeLayerFilenames) {
-      await changeTransparency(smokeLayerFilename, 0.75);
+      const fullFilePath = `./${directory}/${smokeLayerFilename}`;
+      await changeTransparency(fullFilePath, 0.75);
     }
 
-    const time = moment(currentDateTime);
-    index = 0;
-
     // Compose smoke layer with with base map tile
-    console.log('Now overlaying base map, smoke layer, and annotation text...');
-    for (const smokeLayerFilename of smokeLayerFilenames) {
+    let smokeOverlayPromiseList = [];
+
+    console.log('Now overlaying base map with smoke layer');
+
+    for (let i = 0; i < smokeLayerFilenames.length; i++) {
+      const paddedId = String(i + 1).padStart(4, '0');
+      const backgroundImagePath = `./area-base-maps/${areaCode}.png`;
+      const inputFilename = `./${directory}/smoke-overlay-${paddedId}.png`;
+      const outputFilename = `./${directory}/smoke-overlay+base-map_${paddedId}.png`;
+
+      smokeOverlayPromiseList.push(
+        overlaySmokeWithBaseMap(
+          backgroundImagePath,
+          inputFilename,
+          outputFilename
+        )
+      );
+    }
+
+    try {
+      await Promise.all(smokeOverlayPromiseList);
+    } catch (error) {
+      // nothing
+      debugger;
+    }
+
+    const annotationOverlayPromiseList = [];
+    const time = moment(currentDateTime);
+
+    console.log('Now overlaying annotation text...');
+    for (let i = 0; i < smokeLayerFilenames.length; i++) {
       const overlayTypeSplit = CODE_TO_TYPE[typeCode].split('-');
       const overlayTypeResult = [];
 
@@ -296,18 +323,26 @@ async function fetchAndSaveNoaaHrrrOverlays(
       }
 
       const overlayTypeLabel = overlayTypeResult.join(' ');
-      const paddedId = String(index + 1).padStart(4, '0');
+      const paddedId = String(i + 1).padStart(4, '0');
+      const inputFilename = `./${directory}/smoke-overlay+base-map_${paddedId}.png`;
+      const outputFilename = `./${directory}/final${paddedId}.png`;
 
-      overlay(
-        `./area-base-maps/${areaCode}.png`,
-        smokeLayerFilename,
-        `${directory}/final${paddedId}.png`,
-        time,
-        overlayTypeLabel
+      annotationOverlayPromiseList.push(
+        overlayAnnotationText(
+          inputFilename,
+          outputFilename,
+          time,
+          overlayTypeLabel
+        )
       );
 
       time.add(1, 'hour');
-      index++;
+    }
+
+    try {
+      await Promise.all(annotationOverlayPromiseList);
+    } catch (error) {
+      // nothing
     }
 
     const timestamp = modelrunFormat.replace(/\:/g, '_');
@@ -527,36 +562,60 @@ async function fetchMapTiles(
   if (failedRequestUrls.length !== 0) {
     let failedRequestCount = failedRequestUrls.length;
 
-    for (const url of failedRequestUrls) {
-      promiseList.push(fetchTile(url));
-    }
+    let failedRequestIndex = 0;
+    let currentFailedRequestCount = 0;
 
     while (failedRequestCount !== 0) {
+      console.log('Outstanding Failed Requests ' + failedRequestCount);
+
       console.log(
-        'Re-attempting download of ' + failedRequestCount + ' tile images'
+        `Re-attempt failed requests ${failedRequestIndex} through ${
+          failedRequestIndex + 180
+        }`
       );
 
-      let tempImageResponses = [];
+      let currentUrls = failedRequestUrls.slice(
+        failedRequestIndex,
+        failedRequestIndex + 180
+      );
 
-      try {
-        tempImageResponses = await Promise.all(promiseList);
-      } catch (error) {
-        // nothing
-      }
+      currentFailedRequestCount = currentUrls.length;
 
-      promiseList = [];
+      while (currentFailedRequestCount !== 0) {
+        console.log(
+          'Outstanding Current Failed Requests ' + currentFailedRequestCount
+        );
+        console.log('sleep 15 sec');
+        await sleep(15000);
 
-      console.log('sleep');
-      await sleep(15000);
+        promiseList = [];
 
-      for (const imageResponse of tempImageResponses) {
-        if (imageResponse.status === 200) {
-          finalImageResponses.push(imageResponse);
-          failedRequestCount--;
-        } else {
-          promiseList.push(fetchTile(imageResponse.config.url));
+        for (const url of currentUrls) {
+          promiseList.push(fetchTile(url));
+        }
+
+        let tempImageResponses = [];
+
+        try {
+          tempImageResponses = await Promise.all(promiseList);
+        } catch (error) {
+          // nothing
+        }
+
+        currentUrls = [];
+
+        for (const imageResponse of tempImageResponses) {
+          if (imageResponse.status === 200) {
+            finalImageResponses.push(imageResponse);
+            currentFailedRequestCount--;
+            failedRequestCount--;
+          } else {
+            currentUrls.push(imageResponse.config.url);
+          }
         }
       }
+
+      failedRequestIndex = failedRequestIndex + 180;
     }
   }
 
@@ -714,18 +773,13 @@ async function changeTransparency(imagePath, opacity = 0.75) {
 }
 
 // convert 0001.png 0002.png -gravity center -background None -layers Flatten composite.png
-function overlay(
+
+async function overlaySmokeWithBaseMap(
   backgroundImagePath,
   overlayImagePath,
-  outputFilename,
-  timestamp,
-  overlayTypeLabel
+  outputFilename
 ) {
-  const tempUuid = uuidv4();
-  fs.ensureDirSync('./temp');
-  const tempFilename = `./temp/${tempUuid}.png`;
-
-  spawnSync('convert', [
+  return execPromise('convert', [
     backgroundImagePath,
     overlayImagePath,
     '-gravity',
@@ -734,9 +788,16 @@ function overlay(
     'None',
     '-layers',
     'Flatten',
-    tempFilename,
+    outputFilename,
   ]);
+}
 
+async function overlayAnnotationText(
+  imagePath,
+  outputFilename,
+  timestamp,
+  overlayTypeLabel
+) {
   const timestampMoment = moment.utc(timestamp);
   // console.log('UTC TIME: ' + timestampMoment.format('MMM DD YYYY hh:mm A'));
   const readableTimestampMoment = timestampMoment.local();
@@ -744,11 +805,9 @@ function overlay(
   const readableTimestamp = readableTimestampMoment.format(
     'MMM DD YYYY hh:mm A'
   );
-  // console.log('LOCAL TIME: ' + readableTimestamp);
 
-  // Add annotation for date time
-  spawnSync('convert', [
-    tempFilename,
+  return execPromise('convert', [
+    imagePath,
     '-background',
     'Khaki',
     '-font',
@@ -762,8 +821,6 @@ function overlay(
     `${overlayTypeLabel} - Mountain Time - ${dayOfWeek}, ${readableTimestamp}`,
     outputFilename,
   ]);
-
-  fs.unlink(tempFilename);
 }
 
 // fast start
@@ -916,14 +973,10 @@ async function cleanupImageFiles(directory) {
 }
 
 async function execPromise(command, flags) {
-  return new Promise((resolve, reject) => {
-    exec(command, flags, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-        return;
-      }
+  const child = execFile(command, flags);
 
-      resolve();
-    });
+  return new Promise((resolve, reject) => {
+    child.addListener('error', reject);
+    child.addListener('exit', resolve);
   });
 }
