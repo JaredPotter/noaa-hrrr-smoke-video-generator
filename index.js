@@ -114,7 +114,7 @@ if (!!isDev) {
     // now.set("minutes", 0);
     // now.set("seconds", 0);
     // now.add(-1, "hour");
-    const now = moment('2021-08-30T00:00:00Z').utc(); // dev only.
+    const now = moment('2021-08-30T12:00:00Z').utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, 'hours');
@@ -226,6 +226,16 @@ async function fetchAndSaveNoaaHrrrOverlays(
   // currentDateTime.add(forecastResumption, 'hours');
 
   const typeCodes = Object.keys(CODE_TO_TYPE);
+  const forecast = {
+    areaCode,
+    timestamp: moment(modelrunFormat).utc().unix(),
+    near_surface_smoke_video_url_h264: '',
+    near_surface_smoke_video_url_h265: '',
+    near_surface_smoke_video_url_vp9: '',
+    vertically_integrated_smoke_video_url_h264: '',
+    vertically_integrated_smoke_video_url_h265: '',
+    vertically_integrated_smoke_video_url_vp9: '',
+  };
 
   for (let i = 0; i < typeCodes.length; i++) {
     const typeCode = typeCodes[i];
@@ -299,23 +309,8 @@ async function fetchAndSaveNoaaHrrrOverlays(
       time.add(1, 'hour');
       index++;
     }
-  }
 
-  const forecast = {
-    areaCode,
-    timestamp: moment(modelrunFormat).utc().unix(),
-    near_surface_smoke_video_url_h264: '',
-    near_surface_smoke_video_url_h265: '',
-    near_surface_smoke_video_url_vp9: '',
-    vertically_integrated_smoke_video_url_h264: '',
-    vertically_integrated_smoke_video_url_h265: '',
-    vertically_integrated_smoke_video_url_vp9: '',
-  };
-
-  for (let i = 0; i < typeCodes.length; i++) {
-    const typeCode = typeCodes[i];
     const timestamp = modelrunFormat.replace(/\:/g, '_');
-    const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
     const absolutePath = path.resolve('./' + directory);
     const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_h264.mp4`;
     const outputVideoFilenameH265 = `${absolutePath}/${timestamp}_h265.mp4`;
@@ -552,7 +547,7 @@ async function fetchMapTiles(
       promiseList = [];
 
       console.log('sleep');
-      await sleep(5000);
+      await sleep(15000);
 
       for (const imageResponse of tempImageResponses) {
         if (imageResponse.status === 200) {
