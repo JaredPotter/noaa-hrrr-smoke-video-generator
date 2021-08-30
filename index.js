@@ -114,13 +114,13 @@ if (!!isDev) {
     // now.set("minutes", 0);
     // now.set("seconds", 0);
     // now.add(-1, "hour");
-    const now = moment("2021-08-29T18:00:00Z").utc(); // dev only.
+    const now = moment("2021-08-30T00:00:00Z").utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, "hours");
 
     for (const area of AREAS) {
-      console.log("Fetching area - " + area);
+      console.log("Fetching area - " + area.code);
 
       await fetchArea(
         area.zoomLevel,
@@ -246,6 +246,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
     console.log("Snitching together tile images...");
     for (const imageBuffers of imageBufferLists) {
+      debugger;
       const completedImageBuffer = await stitchTileImages(
         imageBuffers,
         256,
@@ -472,9 +473,10 @@ async function fetchMapTiles(
 
   const requestsPerFetch = 180;
   let imageResponses = [];
+  const finalImageResponses = [];
   let offset = 0;
 
-  while (imageResponses.length < totalRequestCount) {
+  while (finalImageResponses.length < totalRequestCount) {
     console.log("imageResponses.length: " + imageResponses.length);
     const startIndex = offset
       ? offset * requestsPerFetch
@@ -513,18 +515,51 @@ async function fetchMapTiles(
 
     promiseList = [];
 
-    offset = offset + 1;
+    const failedRequestUrls = [];
 
     for (const response of imageResponses) {
       if (response.status !== 200) {
-        if (imageResponses[0].status === 204) {
+        if (response.status === 204) {
           console.log("Image response - 204 - No Content");
-          debugger;
 
-          return []; // return an empty image buffer array
+          failedRequestUrls.push(response.config.url);
         }
       } else {
+        finalImageResponses.push(response);
       }
+    }
+
+    if (failedRequestUrls.length === 0) {
+      offset = offset + 1;
+    } else {
+      let failedRequestCount = failedRequestUrls.length;
+
+      console.log(
+        "Re-attempting download of " + failedRequestUrls.length + " tile images"
+      );
+
+      for (const url of failedRequestUrls) {
+        promiseList.push(fetchTile(url));
+      }
+
+      while (failedRequestCount !== 0) {
+        console.log("Re-fetching attempt...");
+        const tempImageResponses = await Promise.all(promiseList);
+
+        promiseList = [];
+
+        for (const imageResponse of tempImageResponses) {
+          if (imageResponse.status === 200) {
+            finalImageResponses.push(imageResponse);
+            failedRequestCount--;
+          } else {
+            console.log("sleep");
+            await sleep(2000);
+            promiseList.push(fetchTile(imageResponse.config.url));
+          }
+        }
+      }
+      debugger;
     }
   }
 
@@ -533,7 +568,7 @@ async function fetchMapTiles(
   // Image responses may return out of order.
   const tileImageMap = new Map();
 
-  for (const response of imageResponses) {
+  for (const response of finalImageResponses) {
     const url = response.config.url;
     const current_url = new URL(url);
 
@@ -545,7 +580,7 @@ async function fetchMapTiles(
     const y = Number(search_params.get("y"));
     const time = search_params.get("time");
 
-    const imageBuffer = Buffer.from(response.data, "binary");
+    const imageBuffer = Buffer.from(response.data, "arraybuffer");
 
     if (tileImageMap.get(time)) {
       tileImageMap.get(time).push({
@@ -635,6 +670,7 @@ async function fetchBaseMapTiles(
     for (const response of imageResponses) {
       if (response.status !== 200) {
         if (imageResponses[0].status === 204) {
+          debugger;
           console.log("Available forecast limit reached! Wrapping up.");
 
           return []; // return an empty image buffer array
@@ -854,7 +890,7 @@ if (!isDev) {
     now.add(forecastResumption, "hours");
 
     for (const area of AREAS) {
-      console.log("Fetching area - " + area);
+      console.log("Fetching area - " + area.code);
 
       await fetchArea(
         area.zoomLevel,
