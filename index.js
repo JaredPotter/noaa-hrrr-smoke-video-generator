@@ -768,7 +768,7 @@ function overlay(
     outputFilename,
   ]);
 
-  fs.unlinkSync(tempFilename);
+  fs.unlink(tempFilename);
 }
 
 // fast start
