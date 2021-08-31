@@ -239,6 +239,10 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
   for (let i = 0; i < typeCodes.length; i++) {
     const typeCode = typeCodes[i];
+
+    const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
+    fs.ensureDirSync(directory);
+
     const imageBufferLists = await fetchMapTiles(
       typeCode,
       zoomLevel,
@@ -250,8 +254,6 @@ async function fetchAndSaveNoaaHrrrOverlays(
     );
 
     let smokeLayerFilenames = [];
-    const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
-    fs.ensureDirSync(directory);
 
     console.log('Snitching together tile images...');
     for (let i = 0; i < imageBufferLists.length; i++) {
@@ -298,7 +300,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
     console.log('Now overlaying base map with smoke layer');
 
-    for (let i = 0; i < smokeLayerFilenames.length; i++) {
+    for (let i = 0; i < 48; i++) {
       const paddedId = String(i + 1).padStart(4, '0');
       const backgroundImagePath = `./area-base-maps/${areaCode}.png`;
       const inputFilename = `./${directory}/smoke-overlay-${paddedId}.png`;
@@ -324,7 +326,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
     const time = moment(currentDateTime);
 
     console.log('Now overlaying annotation text...');
-    for (let i = 0; i < smokeLayerFilenames.length; i++) {
+    for (let i = 0; i < 48; i++) {
       const overlayTypeSplit = CODE_TO_TYPE[typeCode].split('-');
       const overlayTypeResult = [];
 
@@ -357,9 +359,12 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
     const timestamp = modelrunFormat.replace(/\:/g, '_');
     const absolutePath = path.resolve('./' + directory);
-    const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_h264.mp4`;
-    const outputVideoFilenameH265 = `${absolutePath}/${timestamp}_h265.mp4`;
-    const outputVideoFilenameVp9Webm = `${absolutePath}/${timestamp}_vp9.webm`;
+    const h264Crf = 32;
+    const h265Crf = 32;
+    const vp9Crf = 38;
+    const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_${h264Crf}_h264.mp4`;
+    const outputVideoFilenameH265 = `${absolutePath}/${timestamp}_${h265Crf}_h265.mp4`;
+    const outputVideoFilenameVp9Webm = `${absolutePath}/${timestamp}_${vp9Crf}_vp9.webm`;
 
     try {
       console.log('Generating Videos...');
@@ -367,15 +372,19 @@ async function fetchAndSaveNoaaHrrrOverlays(
         absolutePath,
         outputVideoFilenameH264,
         'libx264',
-        26
+        h264Crf
       );
       await generateMp4Video(
         absolutePath,
         outputVideoFilenameH265,
         'libx265',
-        31
+        h265Crf
       );
-      await generateVp9WebmVideo(absolutePath, outputVideoFilenameVp9Webm, 34);
+      await generateVp9WebmVideo(
+        absolutePath,
+        outputVideoFilenameVp9Webm,
+        vp9Crf
+      );
     } catch (error) {
       console.error(error);
       console.error('Failed to generate video. Now exiting!');
@@ -388,13 +397,13 @@ async function fetchAndSaveNoaaHrrrOverlays(
       console.log('Uploading Video...');
 
       const videoUrlH264 = (
-        await uploadVideo(`${directory}/${timestamp}_h264.mp4`)
+        await uploadVideo(`${directory}/${timestamp}_${h264Crf}_h264.mp4`)
       )[0];
       const videoUrlH265 = (
-        await uploadVideo(`${directory}/${timestamp}_h265.mp4`)
+        await uploadVideo(`${directory}/${timestamp}_${h265Crf}_h265.mp4`)
       )[0];
       const videoUrlVp9 = (
-        await uploadVideo(`${directory}/${timestamp}_vp9.webm`)
+        await uploadVideo(`${directory}/${timestamp}_${vp9Crf}_vp9.webm`)
       )[0];
 
       switch (typeCode) {
@@ -822,7 +831,9 @@ function overlayAnnotationText(
     '-font',
     'Times-New-Roman',
     '-pointsize',
-    '36',
+    '48',
+    '-weight',
+    'Bold',
     '-gravity',
     'north',
     '-annotate',
@@ -832,10 +843,7 @@ function overlayAnnotationText(
   ]);
 }
 
-// fast start
-// ffmpeg -i origin.mp4 -acodec copy -vcodec copy -movflags faststart fast_start.mp4
-// ffmpeg -r 8 -f image2 -s 1536x1536 -i ./near-surface-smoke/2021-08-10T05_00_00Z/final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart ./near-surface-smoke/2021-08-10T05_00_00Z/near-surface-smoke-2021-08-10T05_00_00Z.mp4
-// ffmpeg -r 8 -f image2 -s 1536x1536 -i final%04d.png -vcodec libx264 -crf 15 -pix_fmt yuv420p -movflags faststart near-surface-smoke-2021-08-10T05_00_00Z.mp4
+// https://trac.ffmpeg.org/wiki/Encode/H.264
 // https://trac.ffmpeg.org/wiki/Encode/H.265
 async function generateMp4Video(
   directory,
@@ -854,8 +862,12 @@ async function generateMp4Video(
     `${directory}/final%04d.png`,
     '-vcodec',
     encoder,
+    '-preset',
+    'slower',
     '-crf', // h.264 quality (0 and 51) - lower number is higher quality output
     crf,
+    '-tune',
+    'animation',
     '-pix_fmt',
     'yuv420p',
     '-y', // automatic overwrite
@@ -875,6 +887,7 @@ async function generateMp4Video(
 }
 
 // https://trac.ffmpeg.org/wiki/Encode/VP9
+// https://developers.google.com/media/vp9/settings/vod/
 async function generateVp9WebmVideo(directory, outputFilename, crf = 31) {
   const flags = [
     '-r', // framerate
@@ -889,8 +902,8 @@ async function generateVp9WebmVideo(directory, outputFilename, crf = 31) {
     'libvpx-vp9',
     '-crf', // quality (0-63) - lower is higher quality
     crf,
-    // '-pass',
-    // 2,
+    // '-deadline',
+    // 'best',
     '-pix_fmt',
     'yuv420p',
     '-y', // automatic overwrite

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+  <button id="play">PLAY</button>
+  <button id="pause">PAUSE</button>
+  <div class="videos">
+    <!-- <div class="video-box">
+      <h1>h.264</h1>
+      <video class="video-element" controls loop playsinline preload="metadata" id="h264">
+        <source src="./near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_28_h264.mp4#t=0.1"
+          type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
+    </div> -->
+    <!-- <div class="video-box">
+      <h1>h.265</h1>
+      <video class="video-element" controls loop playsinline preload="metadata" id="h265">
+        <source src="./near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_35_h265.mp4#t=0.1"
+          type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
+    </div> -->
+    <div class="video-box">
+      <h1>vp9</h1>
+      <video class="video-element" controls loop playsinline preload="metadata" id="vp9">
+        <source src="./near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_38_vp9.webm#t=0.1"
+          type="video/webm" />
+      </video>
+    </div>
+    <div class="video-box">
+      <h1>vp9</h1>
+      <video class="video-element" controls loop playsinline preload="metadata" id="vp9">
+        <source src="./near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_40_vp9.webm#t=0.1"
+          type="video/webm" />
+      </video>
+    </div>
+  </div>
+
+
+  <!--
+    ffmpeg -r 4 -f image2 -s 1536x1536 -i /Users/larry512/code/noaa-hrrr-smoke-video-generator/near-surface-smoke/2021-08-30T12:00:00Z/utah/final%04d.png -vcodec libx264 -crf 26 -pix_fmt yuv420p -y -movflags faststart /Users/larry512/code/noaa-hrrr-smoke-video-generator/near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_h264.mp4
+    ffmpeg -r 4 -f image2 -s 1536x1536 -i /Users/larry512/code/noaa-hrrr-smoke-video-generator/near-surface-smoke/2021-08-30T12:00:00Z/utah/final%04d.png -vcodec libx265 -crf 31 -pix_fmt yuv420p -y -movflags faststart -tag:v hvc1 /Users/larry512/code/noaa-hrrr-smoke-video-generator/near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_h265.mp4
+    ffmpeg -r 4 -s 1536x1536 -i /Users/larry512/code/noaa-hrrr-smoke-video-generator/near-surface-smoke/2021-08-30T12:00:00Z/utah/final%04d.png -vcodec libvpx-vp9 -crf 34 -pix_fmt yuv420p -y -movflags faststart /Users/larry512/code/noaa-hrrr-smoke-video-generator/near-surface-smoke/2021-08-30T12:00:00Z/utah/2021-08-30T12_00_00Z_vp9.webm
+
+
+   -->
+</body>
+
+
+</html>
+
+<style>
+  .videos {
+    display: flex;
+  }
+
+  .video-box {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  video {
+    width: 100%;
+  }
+</style>
+
+<script>
+  const h264VideoElement = document.querySelector('#h264');
+  const h265VideoElement = document.querySelector('#h265');
+  const vp9VideoElement = document.querySelector('#vp9');
+
+  const playButtonElement = document.querySelector('#play');
+  const pauseButtonElement = document.querySelector('#pause');
+
+  playButtonElement.addEventListener('click', () => {
+    if (h264VideoElement) { h264VideoElement.play(); }
+    if (h265VideoElement) { h265VideoElement.play(); }
+    if (vp9VideoElement) { vp9VideoElement.play(); }
+  });
+
+  pauseButtonElement.addEventListener('click', () => {
+    if (h264VideoElement) { h264VideoElement.pause(); }
+    if (h265VideoElement) { h265VideoElement.pause(); }
+    if (vp9VideoElement) { vp9VideoElement.pause(); }
+  });
+
+</script>

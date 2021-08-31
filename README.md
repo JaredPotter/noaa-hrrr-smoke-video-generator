@@ -18,10 +18,4 @@ Dev Usage (Immediately-invoked Function Expressions)
 
 TODO
 
-- create `temp` folder where uuid png temp files are saved/deleted from. Add temp folder to gitignore
 - add smoke key / legend to each image
-- delete / cleanup utilized png images after successful upload
-- make faster...
-- Add 2 pass flags to ffmpeg encoding
-- test / calculate "best" and comparable parameters for h.264, h.265, and vp9.
-- hunt down bug where some overlay png images aren't getting their transparancy reduced
