@@ -930,19 +930,26 @@ if (!isDev) {
   cron.schedule('58 1,7,13,19 * * *', async () => {
     console.log('TIME TO RUN');
 
-    // Check if on the 6 hour 48-hour forecast
-    const is48HourForecast = await is48HourForecastHour();
-
-    if (!is48HourForecast) {
-      console.log('Current Hour is not 48 hour forecast. Quitting now.');
-      return;
-    }
-
     const now = moment().utc();
     now.set('minutes', 0);
     now.set('seconds', 0);
     now.add(-1, 'hour');
     // const now = moment("2021-08-29T12:00:00Z").utc(); // dev only.
+
+    // Check if on the 6 hour 48-hour forecast
+    let is48HourForecast = await is48HourForecastHour();
+
+    while (!is48HourForecast) {
+      console.log('Sleeping for 15 seconds...');
+      await sleep(15000);
+
+      is48HourForecast = await is48HourForecastHour();
+    }
+
+    if (!is48HourForecast) {
+      console.log('Current Hour is not 48 hour forecast. Quitting now.');
+      return;
+    }
 
     //adjust for correct numbering
     now.add(forecastResumption, 'hours');
