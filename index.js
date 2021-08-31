@@ -276,11 +276,21 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
     smokeLayerFilenames = fs.readdirSync('./' + directory);
 
+    const changeTransparencyPromiseList = [];
+
     // Adjust overlay transparency to 75%
     console.log('Now changing transparency...');
     for (const smokeLayerFilename of smokeLayerFilenames) {
       const fullFilePath = `./${directory}/${smokeLayerFilename}`;
-      await changeTransparency(fullFilePath, 0.75);
+      changeTransparencyPromiseList.push(
+        changeTransparency(fullFilePath, 0.75)
+      );
+    }
+
+    try {
+      await Promise.all(changeTransparencyPromiseList);
+    } catch (error) {
+      // nothing
     }
 
     // Compose smoke layer with with base map tile
@@ -755,8 +765,8 @@ async function fetchBaseMapTiles(
 }
 
 // convert 0001.png -alpha set -background none -channel A -evaluate multiply 0.5 +channel 0001-new.png
-async function changeTransparency(imagePath, opacity = 0.75) {
-  spawnSync('convert', [
+function changeTransparency(imagePath, opacity = 0.75) {
+  return execPromise('convert', [
     imagePath,
     '-alpha',
     'set',
@@ -774,7 +784,7 @@ async function changeTransparency(imagePath, opacity = 0.75) {
 
 // convert 0001.png 0002.png -gravity center -background None -layers Flatten composite.png
 
-async function overlaySmokeWithBaseMap(
+function overlaySmokeWithBaseMap(
   backgroundImagePath,
   overlayImagePath,
   outputFilename
@@ -792,7 +802,7 @@ async function overlaySmokeWithBaseMap(
   ]);
 }
 
-async function overlayAnnotationText(
+function overlayAnnotationText(
   imagePath,
   outputFilename,
   timestamp,
