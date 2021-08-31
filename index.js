@@ -595,8 +595,7 @@ async function fetchMapTiles(
         console.log(
           'Outstanding Current Failed Requests ' + currentFailedRequestCount
         );
-        console.log('sleep 15 sec');
-        await sleep(15000);
+        await sleep(500);
 
         promiseList = [];
 
