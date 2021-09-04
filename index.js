@@ -114,7 +114,7 @@ if (!!isDev) {
     // now.set("minutes", 0);
     // now.set("seconds", 0);
     // now.add(-1, "hour");
-    const now = moment('2021-08-30T12:00:00Z').utc(); // dev only.
+    const now = moment('2021-09-02T00:00:00Z').utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, 'hours');
@@ -946,10 +946,11 @@ async function sleep(ms) {
   });
 }
 
-if (!isDev) {
-  console.log('CRON - NOAA HRRR SMOKE FETCHER STARTED');
+(() => {
+  if (!isDev) {
+    console.log('CRON - NOAA HRRR SMOKE FETCHER STARTED');
 
-  cron.schedule('58 1,7,13,19 * * *', async () => {
+    // cron.schedule('58 1,7,13,19 * * *', async () => {
     console.log('TIME TO RUN');
 
     const now = moment().utc();
@@ -989,8 +990,9 @@ if (!isDev) {
         now
       );
     }
-  });
-}
+    // });
+  }
+})();
 
 async function cleanupImageFiles(directory) {
   const regex = /.*\.png/;
