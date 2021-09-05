@@ -114,7 +114,7 @@ if (!!isDev) {
     // now.set("minutes", 0);
     // now.set("seconds", 0);
     // now.add(-1, "hour");
-    const now = moment('2021-09-02T00:00:00Z').utc(); // dev only.
+    const now = moment('2021-09-06T18:00:00Z').utc(); // dev only.
 
     //adjust for correct numbering
     now.add(forecastResumption, 'hours');
@@ -276,7 +276,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       fs.writeFileSync(fullFilePath, completedImageBuffer);
     }
 
-    smokeLayerFilenames = fs.readdirSync('./' + directory);
+    // let smokeLayerFilenames = fs.readdirSync(directory); // dev only
 
     const changeTransparencyPromiseList = [];
 
@@ -284,6 +284,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
     console.log('Now changing transparency...');
     for (const smokeLayerFilename of smokeLayerFilenames) {
       const fullFilePath = `./${directory}/${smokeLayerFilename}`;
+
       changeTransparencyPromiseList.push(
         changeTransparency(fullFilePath, 0.75)
       );
@@ -293,6 +294,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       await Promise.all(changeTransparencyPromiseList);
     } catch (error) {
       // nothing
+      log(error);
     }
 
     // Compose smoke layer with with base map tile
@@ -319,7 +321,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       await Promise.all(smokeOverlayPromiseList);
     } catch (error) {
       // nothing
-      debugger;
+      log(error);
     }
 
     const annotationOverlayPromiseList = [];
@@ -355,6 +357,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       await Promise.all(annotationOverlayPromiseList);
     } catch (error) {
       // nothing
+      log(error);
     }
 
     const timestamp = modelrunFormat.replace(/\:/g, '_');
@@ -618,6 +621,7 @@ async function fetchMapTiles(
           tempImageResponses = await Promise.all(promiseList);
         } catch (error) {
           // nothing
+          log(error);
         }
 
         currentUrls = [];
@@ -774,8 +778,10 @@ async function fetchBaseMapTiles(
 
 // convert 0001.png -alpha set -background none -channel A -evaluate multiply 0.5 +channel 0001-new.png
 function changeTransparency(imagePath, opacity = 0.75) {
+  const absoluteFilePath = path.resolve(imagePath);
+
   return execPromise('convert', [
-    imagePath,
+    absoluteFilePath,
     '-alpha',
     'set',
     '-background',
@@ -786,7 +792,7 @@ function changeTransparency(imagePath, opacity = 0.75) {
     'multiply',
     opacity,
     '+channel',
-    imagePath,
+    absoluteFilePath,
   ]);
 }
 
@@ -946,11 +952,13 @@ async function sleep(ms) {
   });
 }
 
-(() => {
+function log(message) {
+  fs.appendFileSync('./log.txt', message + '\n');
+}
+
+(async () => {
   if (!isDev) {
     console.log('CRON - NOAA HRRR SMOKE FETCHER STARTED');
-
-    // cron.schedule('58 1,7,13,19 * * *', async () => {
     console.log('TIME TO RUN');
 
     const now = moment().utc();
@@ -961,6 +969,10 @@ async function sleep(ms) {
 
     // Check if on the 6 hour 48-hour forecast
     let is48HourForecast = await is48HourForecastHour();
+
+    if (is48HourForecast) {
+      console.log('Time to fetch forecast!');
+    }
 
     while (!is48HourForecast) {
       console.log('Sleeping for 15 seconds...');
@@ -990,7 +1002,6 @@ async function sleep(ms) {
         now
       );
     }
-    // });
   }
 })();
 
