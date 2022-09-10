@@ -6,13 +6,12 @@
 
 const axios = require('axios');
 const path = require('path');
-const { spawnSync, execFile } = require('child_process');
+const { spawnSync } = require('child_process');
 const moment = require('moment');
-const cron = require('node-cron');
 const fs = require('fs-extra');
-const blend = require('@mapbox/blend');
+
 const firebaseAdmin = require('firebase-admin');
-const { v4: uuidv4 } = require('uuid');
+const utility = require('./utility');
 
 const FIREBASE_ADMIN_SERVICE_ACCOUNT_FILE_NAME =
   './noaa-hrrr-smoke-firebase-adminsdk-en9p6-8fe174d250.json';
@@ -37,6 +36,8 @@ firebaseAdmin.initializeApp({
 const bucket = firebaseAdmin
   .storage()
   .bucket('gs://noaa-hrrr-smoke.appspot.com');
+
+const firestore = firebaseAdmin.firestore();
 
 const isDev = process.argv[2];
 const arg3 = process.argv[3];
@@ -103,18 +104,7 @@ const AREAS = [
 
 if (!!isDev) {
   (async () => {
-    // const is48HourForecast = await is48HourForecastHour();
-
-    // if (!is48HourForecast) {
-    //   console.log("Current Hour is not 48 hour forecast. Quitting now.");
-    //   return;
-    // }
-
-    // const now = moment().utc();
-    // now.set("minutes", 0);
-    // now.set("seconds", 0);
-    // now.add(-1, "hour");
-    const now = moment('2021-09-06T18:00:00Z').utc(); // dev only.
+    const now = await getNearest48HourForecastStartTime();
 
     //adjust for correct numbering
     now.add(forecastResumption, 'hours');
@@ -161,7 +151,12 @@ async function fetchArea(
       gridWidth
     );
 
-    const completeImageBuffer = await stitchTileImages(tiles, 256, 1536, 1536);
+    const completeImageBuffer = await utility.stitchTileImages(
+      tiles,
+      256,
+      1536,
+      1536
+    );
 
     fs.writeFileSync(filename, completeImageBuffer);
   }
@@ -194,6 +189,7 @@ async function is48HourForecastHour() {
 
   try {
     const url = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=25&y=25&z=5&time=${time}&modelrun=${modelrun}&level=0`;
+    // const url = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=25&y=25&z=5&time=&modelrun=${modelrun}&level=0`;
     console.log('Checking if is 48 hour forecast time - ' + url);
     const response = await axios.get(url);
 
@@ -202,11 +198,45 @@ async function is48HourForecastHour() {
     }
   } catch (error) {
     console.error(error);
+    log(error);
 
     return false;
   }
 
   return true;
+}
+
+async function getNearest48HourForecastStartTime() {
+  const modelRunNow = moment().utc();
+  modelRunNow.set('minutes', 0);
+  modelRunNow.set('seconds', 0);
+  modelRunNow.add(-1, 'hour');
+
+  let modelrun = modelRunNow.format();
+  let isNearest = false;
+  let timeMoment = moment(modelRunNow);
+
+  while (!isNearest) {
+    modelrun = modelRunNow.format();
+    timeMoment = moment(modelRunNow);
+    timeMoment.add(48, 'hours');
+    time = timeMoment.format();
+
+    const url = `https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=25&y=25&z=5&time=${time}&modelrun=${modelrun}&level=0`;
+    console.log('Checking if is 48 hour forecast time - ' + url);
+    const response = await axios.get(url);
+
+    if (response.status === 204) {
+      modelRunNow.add(-1, 'hour');
+    } else if (response.status === 200) {
+      isNearest = true;
+      console.log(
+        'Found nearest 48 hour forecast hour -> ' + modelRunNow.hours()
+      );
+    }
+  }
+
+  return modelRunNow;
 }
 
 async function fetchAndSaveNoaaHrrrOverlays(
@@ -241,6 +271,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
     const typeCode = typeCodes[i];
 
     const directory = `${CODE_TO_TYPE[typeCode]}/${modelrunFormat}/${areaCode}`;
+    console.log(`Ensuring Directory Exists ${directory}`);
     fs.ensureDirSync(directory);
 
     const imageBufferLists = await fetchMapTiles(
@@ -258,7 +289,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
     console.log('Snitching together tile images...');
     for (let i = 0; i < imageBufferLists.length; i++) {
       const imageBuffers = imageBufferLists[i];
-      const completedImageBuffer = await stitchTileImages(
+      const completedImageBuffer = await utility.stitchTileImages(
         imageBuffers,
         256,
         1536,
@@ -286,7 +317,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       const fullFilePath = `./${directory}/${smokeLayerFilename}`;
 
       changeTransparencyPromiseList.push(
-        changeTransparency(fullFilePath, 0.75)
+        utility.changeTransparency(fullFilePath, 0.75)
       );
     }
 
@@ -309,7 +340,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       const outputFilename = `./${directory}/smoke-overlay+base-map_${paddedId}.png`;
 
       smokeOverlayPromiseList.push(
-        overlaySmokeWithBaseMap(
+        utility.overlaySmokeWithBaseMap(
           backgroundImagePath,
           inputFilename,
           outputFilename
@@ -342,7 +373,7 @@ async function fetchAndSaveNoaaHrrrOverlays(
       const outputFilename = `./${directory}/final${paddedId}.png`;
 
       annotationOverlayPromiseList.push(
-        overlayAnnotationText(
+        utility.overlayAnnotationText(
           inputFilename,
           outputFilename,
           time,
@@ -361,70 +392,41 @@ async function fetchAndSaveNoaaHrrrOverlays(
     }
 
     const timestamp = modelrunFormat.replace(/\:/g, '_');
-    const absolutePath = path.resolve('./' + directory);
+
     const h264Crf = 32;
     const h265Crf = 32;
     const vp9Crf = 38;
-    const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_${h264Crf}_h264.mp4`;
-    const outputVideoFilenameH265 = `${absolutePath}/${timestamp}_${h265Crf}_h265.mp4`;
-    const outputVideoFilenameVp9Webm = `${absolutePath}/${timestamp}_${vp9Crf}_vp9.webm`;
 
-    try {
-      console.log('Generating Videos...');
-      await generateMp4Video(
-        absolutePath,
-        outputVideoFilenameH264,
-        'libx264',
-        h264Crf
-      );
-      await generateMp4Video(
-        absolutePath,
-        outputVideoFilenameH265,
-        'libx265',
-        h265Crf
-      );
-      await generateVp9WebmVideo(
-        absolutePath,
-        outputVideoFilenameVp9Webm,
-        vp9Crf
-      );
-    } catch (error) {
-      console.error(error);
-      console.error('Failed to generate video. Now exiting!');
-      continue;
-    }
+    await generateVideos(timestamp, directory, h264Crf, h265Crf, vp9Crf);
 
     cleanupImageFiles(directory);
 
-    try {
-      console.log('Uploading Video...');
+    const uploadUrls = await uploadVideos(
+      directory,
+      timestamp,
+      h264Crf,
+      h265Crf,
+      vp9Crf,
+      typeCode
+    );
 
-      const videoUrlH264 = (
-        await uploadVideo(`${directory}/${timestamp}_${h264Crf}_h264.mp4`)
-      )[0];
-      const videoUrlH265 = (
-        await uploadVideo(`${directory}/${timestamp}_${h265Crf}_h265.mp4`)
-      )[0];
-      const videoUrlVp9 = (
-        await uploadVideo(`${directory}/${timestamp}_${vp9Crf}_vp9.webm`)
-      )[0];
-
-      switch (typeCode) {
-        case 'sfc_smoke':
-          forecast.near_surface_smoke_video_url_h264 = videoUrlH264;
-          forecast.near_surface_smoke_video_url_h265 = videoUrlH265;
-          forecast.near_surface_smoke_video_url_vp9 = videoUrlVp9;
-          break;
-        case 'vi_smoke':
-          forecast.vertically_integrated_smoke_video_url_h264 = videoUrlH264;
-          forecast.vertically_integrated_smoke_video_url_h265 = videoUrlH265;
-          forecast.vertically_integrated_smoke_video_url_vp9 = videoUrlVp9;
-          break;
-      }
-    } catch (error) {
-      console.error(error);
-      console.log('Failed to upload video. Now exiting!');
-      continue;
+    switch (typeCode) {
+      case 'sfc_smoke':
+        forecast.near_surface_smoke_video_url_h264 =
+          uploadUrls['near_surface_smoke_video_url_h264'];
+        forecast.near_surface_smoke_video_url_h265 =
+          uploadUrls['near_surface_smoke_video_url_h265'];
+        forecast.near_surface_smoke_video_url_vp9 =
+          uploadUrls['near_surface_smoke_video_url_vp9'];
+        break;
+      case 'vi_smoke':
+        forecast.vertically_integrated_smoke_video_url_h264 =
+          uploadUrls['vertically_integrated_smoke_video_url_h264'];
+        forecast.vertically_integrated_smoke_video_url_h265 =
+          uploadUrls['vertically_integrated_smoke_video_url_h265'];
+        forecast.vertically_integrated_smoke_video_url_vp9 =
+          uploadUrls['vertically_integrated_smoke_video_url_vp9'];
+        break;
     }
   }
 
@@ -441,48 +443,16 @@ async function fetchAndSaveNoaaHrrrOverlays(
   }
 
   try {
-    console.log('POSTing to Laravel API!');
-    await axios.post('https://noaa-hrrr-smoke-api.herokuapp.com/forecasts', {
-      data: forecast,
-    });
+    console.log('Adding Forecast to Firebase Firestore...');
+    await firestore.collection('forecasts').add(forecast);
   } catch (error) {
     console.error(error);
-    console.error('FAIL POSTing to Laravel API. Now quitting.');
+    log(error);
+    console.error('FAIL POSTing to API. Now quitting.');
     return;
   }
 
   console.log('FINISHED with all NOAA HRRR overlay fetching');
-}
-
-async function stitchTileImages(imageBufferList, tileSize, height, width) {
-  for (const imageBufferObject of imageBufferList) {
-    imageBufferObject.x *= tileSize;
-    imageBufferObject.y *= tileSize;
-  }
-
-  return new Promise((resolve, reject) => {
-    // https://www.npmjs.com/package/@mapbox/blend
-    blend(
-      imageBufferList,
-      {
-        format: 'png',
-        quality: 256,
-        height,
-        width,
-      },
-      (error, result) => {
-        if (error) {
-          console.error(error);
-          reject(error);
-          return;
-        }
-
-        // result contains the blended result image compressed as PNG.
-        resolve(result);
-        return;
-      }
-    );
-  });
 }
 
 //https://hwp-viz.gsd.esrl.noaa.gov/wmts/image/hrrr_smoke?var=sfc_smoke&x=24&y=49&z=7&time=2021-08-10T00:00:00.000Z&modelrun=2021-08-10T00:00:00Z&level=0
@@ -551,6 +521,7 @@ async function fetchMapTiles(
 
       await sleep(4000);
     } catch (error) {
+      log(error);
       console.log('Too fast - take a little break');
       await sleep(15360);
 
@@ -582,6 +553,7 @@ async function fetchMapTiles(
   }
 
   if (failedRequestUrls.length !== 0) {
+    let failCount = 0;
     let failedRequestCount = failedRequestUrls.length;
 
     let failedRequestIndex = 0;
@@ -604,6 +576,14 @@ async function fetchMapTiles(
       currentFailedRequestCount = currentUrls.length;
 
       while (currentFailedRequestCount !== 0) {
+        console.log('failCount: ' + failCount);
+
+        if (failCount > 1000) {
+          console.log('Fail count too great. Now exiting cronjob.');
+          log(`Fail count too great. Now exiting cronjob.`);
+          process.exit(1);
+        }
+
         console.log(
           'Outstanding Current Failed Requests ' + currentFailedRequestCount
         );
@@ -626,6 +606,8 @@ async function fetchMapTiles(
 
         currentUrls = [];
 
+        debugger;
+
         for (const imageResponse of tempImageResponses) {
           if (imageResponse.status === 200) {
             finalImageResponses.push(imageResponse);
@@ -635,6 +617,8 @@ async function fetchMapTiles(
             currentUrls.push(imageResponse.config.url);
           }
         }
+
+        failCount++;
       }
 
       failedRequestIndex = failedRequestIndex + 180;
@@ -776,77 +760,36 @@ async function fetchBaseMapTiles(
   return imageBufferList;
 }
 
-// convert 0001.png -alpha set -background none -channel A -evaluate multiply 0.5 +channel 0001-new.png
-function changeTransparency(imagePath, opacity = 0.75) {
-  const absoluteFilePath = path.resolve(imagePath);
+async function generateVideos(timestamp, directory, h264Crf, h265Crf, vp9Crf) {
+  const absolutePath = path.resolve('./' + directory);
+  const outputVideoFilenameH264 = `${absolutePath}/${timestamp}_${h264Crf}_h264.mp4`;
+  const outputVideoFilenameH265 = `${absolutePath}/${timestamp}_${h265Crf}_h265.mp4`;
+  const outputVideoFilenameVp9Webm = `${absolutePath}/${timestamp}_${vp9Crf}_vp9.webm`;
 
-  return execPromise('convert', [
-    absoluteFilePath,
-    '-alpha',
-    'set',
-    '-background',
-    'none',
-    '-channel',
-    'A',
-    '-evaluate',
-    'multiply',
-    opacity,
-    '+channel',
-    absoluteFilePath,
-  ]);
-}
-
-// convert 0001.png 0002.png -gravity center -background None -layers Flatten composite.png
-
-function overlaySmokeWithBaseMap(
-  backgroundImagePath,
-  overlayImagePath,
-  outputFilename
-) {
-  return execPromise('convert', [
-    backgroundImagePath,
-    overlayImagePath,
-    '-gravity',
-    'center',
-    '-background',
-    'None',
-    '-layers',
-    'Flatten',
-    outputFilename,
-  ]);
-}
-
-function overlayAnnotationText(
-  imagePath,
-  outputFilename,
-  timestamp,
-  overlayTypeLabel
-) {
-  const timestampMoment = moment.utc(timestamp);
-  // console.log('UTC TIME: ' + timestampMoment.format('MMM DD YYYY hh:mm A'));
-  const readableTimestampMoment = timestampMoment.local();
-  const dayOfWeek = readableTimestampMoment.format('dddd');
-  const readableTimestamp = readableTimestampMoment.format(
-    'MMM DD YYYY hh:mm A'
-  );
-
-  return execPromise('convert', [
-    imagePath,
-    '-background',
-    'Khaki',
-    '-font',
-    'Times-New-Roman',
-    '-pointsize',
-    '48',
-    '-weight',
-    'Bold',
-    '-gravity',
-    'north',
-    '-annotate',
-    '+10+10',
-    `${overlayTypeLabel} - Mountain Time - ${dayOfWeek}, ${readableTimestamp}`,
-    outputFilename,
-  ]);
+  try {
+    console.log('Generating Videos...');
+    await generateMp4Video(
+      absolutePath,
+      outputVideoFilenameH264,
+      'libx264',
+      h264Crf
+    );
+    await generateMp4Video(
+      absolutePath,
+      outputVideoFilenameH265,
+      'libx265',
+      h265Crf
+    );
+    await generateVp9WebmVideo(
+      absolutePath,
+      outputVideoFilenameVp9Webm,
+      vp9Crf
+    );
+  } catch (error) {
+    console.error(error);
+    log(error);
+    console.error('Failed to generate video. Now exiting!');
+  }
 }
 
 // https://trac.ffmpeg.org/wiki/Encode/H.264
@@ -923,6 +866,50 @@ async function generateVp9WebmVideo(directory, outputFilename, crf = 31) {
   spawnSync('ffmpeg', flags);
 }
 
+async function uploadVideos(
+  directory,
+  timestamp,
+  h264Crf,
+  h265Crf,
+  vp9Crf,
+  typeCode
+) {
+  const urls = {};
+
+  try {
+    console.log('Uploading Video...');
+
+    const videoUrlH264 = (
+      await uploadVideo(`${directory}/${timestamp}_${h264Crf}_h264.mp4`)
+    )[0];
+    const videoUrlH265 = (
+      await uploadVideo(`${directory}/${timestamp}_${h265Crf}_h265.mp4`)
+    )[0];
+    const videoUrlVp9 = (
+      await uploadVideo(`${directory}/${timestamp}_${vp9Crf}_vp9.webm`)
+    )[0];
+
+    switch (typeCode) {
+      case 'sfc_smoke':
+        urls['near_surface_smoke_video_url_h264'] = videoUrlH264;
+        urls['near_surface_smoke_video_url_h265'] = videoUrlH265;
+        urls['near_surface_smoke_video_url_vp9'] = videoUrlVp9;
+        break;
+      case 'vi_smoke':
+        urls['vertically_integrated_smoke_video_url_h264'] = videoUrlH264;
+        urls['vertically_integrated_smoke_video_url_h265'] = videoUrlH265;
+        urls['vertically_integrated_smoke_video_url_vp9'] = videoUrlVp9;
+        break;
+    }
+  } catch (error) {
+    console.error(error);
+    log(error);
+    console.log('Failed to upload video. Now exiting!');
+  }
+
+  return urls;
+}
+
 async function uploadVideo(fileName) {
   const fileResultArray = await bucket.upload(fileName, {
     destination: fileName,
@@ -953,6 +940,7 @@ async function sleep(ms) {
 }
 
 function log(message) {
+  fs.ensureFileSync('./log.txt');
   fs.appendFileSync('./log.txt', message + '\n');
 }
 
@@ -1012,13 +1000,4 @@ async function cleanupImageFiles(directory) {
   const imageFilenames = filenames.filter((filename) => regex.test(filename));
 
   imageFilenames.map((filename) => fs.unlinkSync(`${directory}/${filename}`));
-}
-
-async function execPromise(command, flags) {
-  const child = execFile(command, flags);
-
-  return new Promise((resolve, reject) => {
-    child.addListener('error', reject);
-    child.addListener('exit', resolve);
-  });
 }
