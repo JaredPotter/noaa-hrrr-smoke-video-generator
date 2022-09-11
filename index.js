@@ -9,6 +9,9 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const moment = require('moment');
 const fs = require('fs-extra');
+const os = require('os');
+const cpuCount = os.cpus().length;
+const PromisePool = require('es6-promise-pool');
 
 const firebaseAdmin = require('firebase-admin');
 const utility = require('./utility');
@@ -97,8 +100,8 @@ const newMexicoArea = {
 const AREAS = [
   utahArea,
   northWestArea,
-  coloradoArea,
-  newMexicoArea,
+  // coloradoArea,
+  // newMexicoArea,
   unitedStatesArea,
 ];
 
@@ -251,10 +254,6 @@ async function fetchAndSaveNoaaHrrrOverlays(
   const modelrun = moment(startDateTimeMoment);
   const modelrunFormat = modelrun.format();
   const currentDateTime = moment(startDateTimeMoment);
-
-  //adjust for correct numbering
-  // currentDateTime.add(forecastResumption, 'hours');
-
   const typeCodes = Object.keys(CODE_TO_TYPE);
   const forecast = {
     areaCode,
@@ -274,6 +273,9 @@ async function fetchAndSaveNoaaHrrrOverlays(
     console.log(`Ensuring Directory Exists ${directory}`);
     fs.ensureDirSync(directory);
 
+    let current = moment().unix();
+    console.log(current);
+
     const imageBufferLists = await fetchMapTiles(
       typeCode,
       zoomLevel,
@@ -285,6 +287,10 @@ async function fetchAndSaveNoaaHrrrOverlays(
     );
 
     let smokeLayerFilenames = [];
+
+    let now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
 
     console.log('Snitching together tile images...');
     for (let i = 0; i < imageBufferLists.length; i++) {
@@ -307,17 +313,35 @@ async function fetchAndSaveNoaaHrrrOverlays(
       fs.writeFileSync(fullFilePath, completedImageBuffer);
     }
 
-    // let smokeLayerFilenames = fs.readdirSync(directory); // dev only
-
     const changeTransparencyPromiseList = [];
 
-    // Adjust overlay transparency to 75%
+    now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
+
+    // Adjust overlay transparency to 60%
+    // console.log('Now changing transparency...');
+    // let pool = new PromisePool(() => {
+    //   for (const smokeLayerFilename of smokeLayerFilenames) {
+    //     const fullFilePath = `./${directory}/${smokeLayerFilename}`;
+
+    //     // changeTransparencyPromiseList.push(
+    //     return utility.changeTransparency(fullFilePath, 0.6);
+    //     // );
+    //   }
+    // }, cpuCount * 4);
+
+    // $result = await pool.start();
+
+    // debugger;
+
+    // Adjust overlay transparency to 60%
     console.log('Now changing transparency...');
     for (const smokeLayerFilename of smokeLayerFilenames) {
       const fullFilePath = `./${directory}/${smokeLayerFilename}`;
 
       changeTransparencyPromiseList.push(
-        utility.changeTransparency(fullFilePath, 0.75)
+        utility.changeTransparency(fullFilePath, 0.6)
       );
     }
 
@@ -327,6 +351,10 @@ async function fetchAndSaveNoaaHrrrOverlays(
       // nothing
       log(error);
     }
+
+    now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
 
     // Compose smoke layer with with base map tile
     let smokeOverlayPromiseList = [];
@@ -354,6 +382,10 @@ async function fetchAndSaveNoaaHrrrOverlays(
       // nothing
       log(error);
     }
+
+    now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
 
     const annotationOverlayPromiseList = [];
     const time = moment(currentDateTime);
@@ -391,6 +423,10 @@ async function fetchAndSaveNoaaHrrrOverlays(
       log(error);
     }
 
+    now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
+
     const timestamp = modelrunFormat.replace(/\:/g, '_');
 
     const h264Crf = 32;
@@ -399,7 +435,11 @@ async function fetchAndSaveNoaaHrrrOverlays(
 
     await generateVideos(timestamp, directory, h264Crf, h265Crf, vp9Crf);
 
-    cleanupImageFiles(directory);
+    now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
+
+    utility.cleanupImageFiles(directory);
 
     const uploadUrls = await uploadVideos(
       directory,
@@ -409,6 +449,10 @@ async function fetchAndSaveNoaaHrrrOverlays(
       vp9Crf,
       typeCode
     );
+
+    now = moment().unix();
+    console.log(`${now - current} seconds`);
+    current = now;
 
     switch (typeCode) {
       case 'sfc_smoke':
@@ -962,12 +1006,20 @@ function log(message) {
       console.log('Time to fetch forecast!');
     }
 
-    while (!is48HourForecast) {
-      console.log('Sleeping for 15 seconds...');
-      await sleep(15000);
+    // let is48HourForecastHourAttemptCount = 0;
 
-      is48HourForecast = await is48HourForecastHour();
-    }
+    // while (!is48HourForecast) {
+    //   console.log('Sleeping for 15 seconds...');
+    //   await sleep(15000);
+
+    //   is48HourForecast = await is48HourForecastHour();
+
+    //   is48HourForecastHourAttemptCount++;
+
+    //   if(is48HourForecastHourAttemptCount) {
+    // something
+    //}
+    // }
 
     if (!is48HourForecast) {
       console.log('Current Hour is not 48 hour forecast. Quitting now.');
@@ -992,12 +1044,3 @@ function log(message) {
     }
   }
 })();
-
-async function cleanupImageFiles(directory) {
-  const regex = /.*\.png/;
-
-  const filenames = fs.readdirSync(directory);
-  const imageFilenames = filenames.filter((filename) => regex.test(filename));
-
-  imageFilenames.map((filename) => fs.unlinkSync(`${directory}/${filename}`));
-}

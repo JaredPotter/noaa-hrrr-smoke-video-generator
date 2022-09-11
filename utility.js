@@ -2,6 +2,7 @@ const moment = require('moment');
 const { execFile } = require('child_process');
 const blend = require('@mapbox/blend');
 const path = require('path');
+const fs = require('fs-extra');
 
 async function stitchTileImages(imageBufferList, tileSize, height, width) {
   for (const imageBufferObject of imageBufferList) {
@@ -115,9 +116,19 @@ async function execPromise(command, flags) {
   });
 }
 
+async function cleanupImageFiles(directory) {
+  const regex = /.*\.png/;
+
+  const filenames = fs.readdirSync(directory);
+  const imageFilenames = filenames.filter((filename) => regex.test(filename));
+
+  imageFilenames.map((filename) => fs.unlinkSync(`${directory}/${filename}`));
+}
+
 module.exports = {
   stitchTileImages,
   changeTransparency,
   overlaySmokeWithBaseMap,
   overlayAnnotationText,
+  cleanupImageFiles,
 };
